@@ -31,16 +31,34 @@ def _kin_command_parts(kin_path: str) -> list[str]:
     return [kin_path]
 
 
+_PLUGIN_ROOT_VAR = "${CLAUDE_PLUGIN_ROOT}"
+
+
+def _shell_word(part: str) -> str:
+    """Quote one word for the hook script, leaving ${CLAUDE_PLUGIN_ROOT} expandable.
+
+    The packaged plugin's kin path starts with the variable; single-quoting it
+    hands bash the literal text, which resolves relative to the session's cwd.
+    """
+    if part.startswith(_PLUGIN_ROOT_VAR):
+        return f'"{_PLUGIN_ROOT_VAR}"' + shlex.quote(part[len(_PLUGIN_ROOT_VAR):])
+    return shlex.quote(part)
+
+
+def _kin_shell_command(kin_path: str, args: list[str]) -> str:
+    return " ".join(_shell_word(part) for part in [*_kin_command_parts(kin_path), *args])
+
+
 def _kin_hook_command(kin_path: str, args: list[str]) -> str:
     """Build a hook command that loads shell exports before running kin."""
-    command = " ".join(shlex.quote(part) for part in [*_kin_command_parts(kin_path), *args])
+    command = _kin_shell_command(kin_path, args)
     script = f"source ~/.profile >/dev/null 2>&1 || true; exec {command}"
     return f"/bin/bash -lc {shlex.quote(script)}"
 
 
 def _kin_stop_hook_command(kin_path: str, args: list[str]) -> str:
     """Build a Claude Stop hook command that avoids stop-hook recursion."""
-    command = " ".join(shlex.quote(part) for part in [*_kin_command_parts(kin_path), *args])
+    command = _kin_shell_command(kin_path, args)
     active_check = (
         "import json,sys; "
         "raw=sys.stdin.read(); "

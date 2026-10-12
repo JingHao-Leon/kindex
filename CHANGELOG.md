@@ -9,6 +9,9 @@ All notable changes to Kindex are documented here. Format follows [Keep a Change
   consecutive automatic snooze doubles the last (15 min, 30 min, 1 h, ...) up
   to `reminders.auto_snooze_max` (default 24 h). A manual snooze, or a
   recurring reminder's next occurrence, starts the backoff over.
+- Packaged Claude plugin hooks expand `${CLAUDE_PLUGIN_ROOT}`.  The generated
+  commands single-quoted it, so bash ran the literal path relative to the
+  session's cwd and every hook failed with "No such file or directory".
 
 ## [0.48.1] - 2026-10-06
 
