@@ -4836,7 +4836,7 @@ class Store:
 
     def snooze_reminder(
         self, reminder_id: str, snooze_until: str, increment_count: bool = True,
-        *, automatic: bool = False,
+        *, automatic: bool = False, expect_streak: int | None = None,
     ) -> bool:
         """Snooze notifications; only a deliberate snooze defers action freshness.
 
@@ -4844,12 +4844,19 @@ class Store:
         snooze on the first automatic retry rather than guessing its origin.
         Returns whether a row was snoozed. Automatic retries only claim fired
         rows; completion/cancellation and manual snoozes win if committed first.
+        ``expect_streak`` is the auto-snooze streak the caller sized
+        ``snooze_until`` from; if another snooze has moved it since, this one
+        is skipped and the next sweep sizes it afresh.
         """
         conn = self.conn
         conn.execute("BEGIN IMMEDIATE")
         try:
             r = self.get_reminder(reminder_id)
             if not r or (automatic and r["status"] != "fired"):
+                conn.rollback()
+                return False
+            if (expect_streak is not None and
+                    (r.get("extra") or {}).get("auto_snooze_streak", 0) != expect_streak):
                 conn.rollback()
                 return False
             fields: dict[str, Any] = {
@@ -4859,8 +4866,12 @@ class Store:
             extra = dict(r.get("extra") or {})
             if automatic:
                 extra.setdefault("action_snooze_until", r.get("snooze_until"))
+                extra["auto_snooze_streak"] = extra.get("auto_snooze_streak", 0) + 1
             else:
                 extra["action_snooze_until"] = snooze_until
+                # A deliberate snooze means the user has seen it: the next
+                # automatic snooze starts the backoff over.
+                extra.pop("auto_snooze_streak", None)
             fields["extra"] = extra
             if increment_count:
                 fields["snooze_count"] = r.get("snooze_count", 0) + 1

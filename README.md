@@ -1236,6 +1236,7 @@ reminders:
   default_channels: [system]     # system, slack, email, claude, terminal
   snooze_duration: 900           # 15 min default snooze
   auto_snooze_timeout: 300       # auto-snooze after 5 min inaction
+  auto_snooze_max: 86400         # repeated auto-snoozes double up to this cap
   max_action_overdue: 86400      # stale actions notify only; 0 disables guard
   idle_suppress_after: 600       # suppress if idle > 10 min
   stop_guard_enabled: false      # opt-in; blocking Stop hooks are noisy in Claude

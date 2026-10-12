@@ -747,6 +747,11 @@ class ReminderConfig(BaseModel):
     default_channels: list[str] = Field(default_factory=lambda: ["system"])
     snooze_duration: int = 900
     auto_snooze_timeout: int = 300
+    # Each consecutive automatic snooze doubles the last, starting from
+    # snooze_duration, up to this cap. Without it an ignored reminder
+    # re-notified every 20 minutes indefinitely. Set equal to
+    # snooze_duration for the old fixed cadence.
+    auto_snooze_max: int = 86400
     idle_suppress_after: int = 600
     action_enabled: bool = True        # enable action execution on reminder fire
     # Never auto-execute an action overdue by more than this many seconds —

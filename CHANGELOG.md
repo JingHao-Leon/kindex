@@ -4,6 +4,12 @@ All notable changes to Kindex are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+### Fixed
+- An ignored reminder no longer re-notifies every 20 minutes forever. Each
+  consecutive automatic snooze doubles the last (15 min, 30 min, 1 h, ...) up
+  to `reminders.auto_snooze_max` (default 24 h). A manual snooze, or a
+  recurring reminder's next occurrence, starts the backoff over.
+
 ## [0.48.1] - 2026-10-06
 
 ### Fixed

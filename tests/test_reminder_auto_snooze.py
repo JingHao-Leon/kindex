@@ -43,7 +43,8 @@ def auto_snooze_and_expire(store, config, now, rid):
     assert reminders.auto_snooze_stale(store, config) == 1
     assert store.get_reminder(rid)["status"] == "snoozed"
     assert reminders.check_and_fire(store, config) == []
-    now[0] += datetime.timedelta(seconds=config.reminders.snooze_duration)
+    # Automatic snoozes back off, so jump to this one's own deadline.
+    now[0] = datetime.datetime.fromisoformat(store.get_reminder(rid)["snooze_until"])
 
 
 @pytest.mark.parametrize("mode", ["shell", "claude", "codex", "opencode"])
@@ -216,3 +217,87 @@ def test_recurring_cleanup_preserves_concurrent_manual_resume(cycle, monkeypatch
         assert store.get_reminder(rid)["extra"]["action_status"] == "pending"
     finally:
         other.close()
+
+
+def fire_and_auto_snooze(store, config, now, rid):
+    """Fire the due reminder, let it go stale, and return the snooze length."""
+    assert [r["id"] for r in reminders.check_and_fire(store, config)] == [rid]
+    now[0] += datetime.timedelta(seconds=config.reminders.auto_snooze_timeout)
+    assert reminders.auto_snooze_stale(store, config) == 1
+    until = datetime.datetime.fromisoformat(store.get_reminder(rid)["snooze_until"])
+    snoozed = int((until - now[0]).total_seconds())
+    now[0] = until
+    return snoozed
+
+
+def test_ignored_reminder_backs_off_to_the_cap(cycle):
+    store, config, now, notify, run = cycle
+    config.reminders.action_enabled = False
+    rid = store.add_reminder("ignored", now[0].isoformat())
+    base = config.reminders.snooze_duration
+    lengths = [fire_and_auto_snooze(store, config, now, rid) for _ in range(9)]
+    assert lengths == [base * 2 ** n for n in range(7)] + [86400, 86400]
+    assert store.get_reminder(rid)["extra"]["auto_snooze_streak"] == 9
+
+
+def test_cap_at_snooze_duration_keeps_the_fixed_cadence(cycle):
+    store, config, now, notify, run = cycle
+    config.reminders.action_enabled = False
+    config.reminders.auto_snooze_max = config.reminders.snooze_duration
+    rid = store.add_reminder("fixed", now[0].isoformat())
+    lengths = [fire_and_auto_snooze(store, config, now, rid) for _ in range(3)]
+    assert lengths == [config.reminders.snooze_duration] * 3
+
+
+def test_manual_snooze_restarts_the_backoff(cycle):
+    store, config, now, notify, run = cycle
+    config.reminders.action_enabled = False
+    rid = store.add_reminder("seen", now[0].isoformat())
+    for _ in range(3):
+        fire_and_auto_snooze(store, config, now, rid)
+    reminders.snooze_reminder(store, rid, duration_seconds=60)
+    assert "auto_snooze_streak" not in store.get_reminder(rid)["extra"]
+    now[0] += datetime.timedelta(seconds=60)
+    assert fire_and_auto_snooze(store, config, now, rid) == config.reminders.snooze_duration
+
+
+def test_next_recurring_occurrence_restarts_the_backoff(cycle):
+    store, config, now, notify, run = cycle
+    rid = store.add_reminder("daily", now[0].isoformat())
+    store.update_reminder(rid, extra={"auto_snooze_streak": 5},
+                          reminder_type="recurring", schedule="FREQ=DAILY")
+    reminders.advance_recurring(store, rid)
+    assert "auto_snooze_streak" not in store.get_reminder(rid)["extra"]
+
+
+def test_auto_snooze_sized_from_a_stale_streak_is_skipped(cycle):
+    store, config, now, notify, run = cycle
+    config.reminders.action_enabled = False
+    rid = store.add_reminder("raced", now[0].isoformat())
+    reminders.check_and_fire(store, config)
+    # Another sweep snoozed it and it fired again after this one read streak 0.
+    store.update_reminder(rid, extra={"auto_snooze_streak": 1})
+    assert not store.snooze_reminder(rid, now[0].isoformat(), automatic=True,
+                                     expect_streak=0)
+    r = store.get_reminder(rid)
+    assert r["status"] == "fired"
+    assert r["extra"]["auto_snooze_streak"] == 1
+
+
+def test_manual_reset_beats_an_auto_snooze_sized_before_it(cycle):
+    store, config, now, notify, run = cycle
+    config.reminders.action_enabled = False
+    rid = store.add_reminder("reset", now[0].isoformat())
+    for _ in range(7):
+        fire_and_auto_snooze(store, config, now, rid)
+    reminders.check_and_fire(store, config)
+    stale_until = (now[0] + datetime.timedelta(days=1)).isoformat()
+    # The user snoozes and it fires again before the sized auto-snooze lands.
+    reminders.snooze_reminder(store, rid, duration_seconds=60)
+    now[0] += datetime.timedelta(seconds=60)
+    reminders.check_and_fire(store, config)
+    assert not store.snooze_reminder(rid, stale_until, automatic=True, expect_streak=7)
+    now[0] += datetime.timedelta(seconds=config.reminders.auto_snooze_timeout)
+    assert reminders.auto_snooze_stale(store, config) == 1
+    until = datetime.datetime.fromisoformat(store.get_reminder(rid)["snooze_until"])
+    assert until - now[0] == datetime.timedelta(seconds=config.reminders.snooze_duration)
