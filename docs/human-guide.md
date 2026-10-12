@@ -67,6 +67,9 @@ kin setup-antigravity-md --install
 kin setup-opencode-mcp
 kin setup-agents-md --install --global
 
+# Muse
+kin setup-muse-mcp
+
 # Cursor
 kin setup-cursor-mcp
 kin setup-cursor-rules --install

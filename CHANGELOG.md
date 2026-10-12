@@ -4,6 +4,13 @@ All notable changes to Kindex are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+### Added
+- `kin setup-muse-mcp` registers `kin-mcp` as an optional stdio server in Muse's
+  `~/.config/muse/settings.json` (`--uninstall`, `--dry-run`). It refuses to write
+  while a legacy `mcp_servers` key is present, because Muse then ignores every MCP
+  server, and uses the absolute `kin-mcp` path because Muse passes MCP children a
+  small environment allowlist.
+
 ### Fixed
 - An ignored reminder no longer re-notifies every 20 minutes forever. Each
   consecutive automatic snooze doubles the last (15 min, 30 min, 1 h, ...) up

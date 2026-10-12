@@ -6616,6 +6616,22 @@ def cmd_setup_opencode_mcp(args):
         print(f"  {a}")
 
 
+def cmd_setup_muse_mcp(args):
+    """Install/uninstall Kindex as a Muse MCP server."""
+    cfg = _config(args)
+    dry_run = getattr(args, "dry_run", False)
+
+    if getattr(args, "uninstall", False):
+        from .setup import uninstall_muse_mcp
+        actions = uninstall_muse_mcp(cfg, dry_run=dry_run)
+    else:
+        from .setup import install_muse_mcp
+        actions = install_muse_mcp(cfg, dry_run=dry_run)
+
+    for a in actions:
+        print(f"  {a}")
+
+
 def cmd_setup_opencode_hooks(args):
     """Install/uninstall the Kindex OpenCode plugin (session-start priming)."""
     cfg = _config(args)
@@ -7823,6 +7839,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--uninstall", action="store_true", help="Remove installed MCP server")
     _common(s)
     s.set_defaults(func=cmd_setup_opencode_mcp)
+
+    # setup-muse-mcp
+    s = sub.add_parser("setup-muse-mcp", help="Install Kindex MCP server into Muse")
+    s.add_argument("--dry-run", action="store_true", help="Show what would be done")
+    s.add_argument("--uninstall", action="store_true", help="Remove installed MCP server")
+    _common(s)
+    s.set_defaults(func=cmd_setup_muse_mcp)
 
     # setup-opencode-hooks
     s = sub.add_parser("setup-opencode-hooks",
