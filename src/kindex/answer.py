@@ -3882,6 +3882,11 @@ def plain_draft(question: str, config: Config, client, ledger, as_of, team, inte
 def _answer(store: Store, question: str, config: Config, client, ledger, as_of, team, on_text) -> AskResult | None:
     config = large_memory_config(store, question, config)
     cfg = config.ask
+    if cfg.evidence_only and cfg.verify:
+        # No answer is drafted, so there is nothing to verify: assemble the evidence the
+        # plain answer call would read, with no cited draft or audit calls.
+        config = config.model_copy(update={"ask": cfg.model_copy(update={"verify": False})})
+        cfg = config.ask
     dialogue_sessions = dialogue_source_sessions(store) if (
         not cfg.verify and not cfg.count_inventory
         and (cfg.dialogue_archive or cfg.dialogue_sessions or cfg.dialogue_relation_plan)
