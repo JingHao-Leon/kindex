@@ -232,6 +232,18 @@ def _walk_files(root: Path, exclude: list[str],
     return files
 
 
+def _root_excluded(path: Path, root: Path, patterns: list[str] | None) -> bool:
+    """Whether ``path``, taken relative to ``root`` with '/' separators,
+    matches one of ``patterns``."""
+    if not patterns:
+        return False
+    try:
+        rel = path.relative_to(root).as_posix()
+    except ValueError:
+        return False
+    return any(fnmatch(rel, pat) for pat in patterns)
+
+
 def _get_file_list(directory: Path, repo_root: Path | None,
                    exclude: list[str],
                    extensions: set[str] | None = None) -> list[Path]:
@@ -1061,6 +1073,7 @@ def ingest_code(
     exclude: list[str] | None = None,
     unity: bool = False,
     extra_extensions: dict[str, str] | None = None,
+    extra_exclude: list[str] | None = None,
 ) -> IngestResult:
     """Ingest code structure from a directory into the knowledge graph.
 
@@ -1071,6 +1084,13 @@ def ingest_code(
     unity opts in to Unity serialized assets (.unity/.prefab/.asset/...)
     with .meta GUID attachment; extra_extensions maps additional
     extensions to language labels (".shader" -> "Unity Shader").
+
+    exclude replaces the built-in _DEFAULT_EXCLUDES and matches paths
+    relative to ``directory``. extra_exclude (code_ingest.exclude in
+    .kin/config) adds to whatever set applies and matches paths relative
+    to the repository root, so a pattern names the same files whichever
+    directory is ingested. A file either one drops is not listed, so its
+    nodes are retired by the reconcile pass like a deleted file's.
     """
     directory = Path(directory).resolve()
     if not directory.is_dir():
@@ -1103,8 +1123,9 @@ def ingest_code(
 
     # Get file list
     # git ls-files still lists a file deleted but not staged; it is gone.
+    effective_root = repo_root or directory
     files = [f for f in _get_file_list(directory, repo_root, exclude_patterns, extensions)
-             if f.is_file()]
+             if f.is_file() and not _root_excluded(f, effective_root, extra_exclude)]
     if verbose:
         print(f"  Found {len(files)} source files in {directory}")
 
@@ -1121,7 +1142,6 @@ def ingest_code(
     # Run ctags on code files only — asset files added via unity/
     # extra_extensions have no ctags parser, and feeding them in would
     # make the per-file retry after a failed batch O(assets).
-    effective_root = repo_root or directory
     ctags_files = [f for f in files if f.suffix.lower() in _CODE_EXTENSIONS]
     tags = _run_ctags(ctags_files, effective_root) if ctags_files else []
     if verbose:
@@ -1661,13 +1681,12 @@ def _target_code_ingest(directory: str):
     The project-scoped Unity opt-in should follow the directory being
     ingested, not whatever project the caller's cwd resolves to. Reads
     only the target's git-tracked .kin/config (checked at the directory
-    itself, then at its git root) — no global config layering, so tests
+    itself, then at its git root) and the configs it ``inherits``, merged
+    as load_config merges them — no global config layering, so tests
     and cross-project ingests stay hermetic. Returns None when absent.
     """
     try:
-        import yaml
-
-        from ..config import CodeIngestConfig
+        from ..config import CodeIngestConfig, _load_kin_config_with_inheritance
 
         d = Path(directory).resolve()
         repo = _detect_repo(d)
@@ -1675,7 +1694,7 @@ def _target_code_ingest(directory: str):
         for root in dict.fromkeys(candidates):
             f = Path(root) / ".kin" / "config"
             if f.is_file():
-                data = yaml.safe_load(f.read_text()) or {}
+                data = _load_kin_config_with_inheritance(f)
                 section = data.get("code_ingest") if isinstance(data, dict) else None
                 if isinstance(section, dict):
                     return CodeIngestConfig(**section)
@@ -1690,7 +1709,9 @@ class CodeAdapter:
         description="Ingest code structure via ctags, cscope, and tree-sitter",
         options=[
             AdapterOption("directory", "Repository or directory to analyze", required=True),
-            AdapterOption("exclude", "Comma-separated exclude glob patterns"),
+            AdapterOption("exclude", "Comma-separated exclude glob patterns, relative "
+                                     "to the directory; replaces the built-in excludes "
+                                     "(.kin/config code_ingest.exclude adds to them)"),
             AdapterOption("unity", "Include Unity asset files (.unity/.prefab/.asset) "
                                    "and .meta GUIDs"),
         ],
@@ -1719,11 +1740,13 @@ class CodeAdapter:
         if unity is None:
             unity = bool(code_ingest and code_ingest.unity)
         extra_extensions = dict(code_ingest.include_extensions) if code_ingest else None
+        extra_exclude = list(code_ingest.exclude) if code_ingest else None
 
         return ingest_code(
             store, directory,
             limit=limit, verbose=verbose, exclude=exclude,
             unity=unity, extra_extensions=extra_extensions,
+            extra_exclude=extra_exclude,
         )
 
 

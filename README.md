@@ -1021,6 +1021,16 @@ Ingest repository structure with `kin ingest code --directory .`:
 - **Resilient fallback** — unsupported or untagged files still become module nodes; available tree-sitter parsers can still enrich those modules, with fallback provenance retained in metadata
 - **Incremental** — file hashing skips unchanged files on re-ingest
 - **Unity projects (opt-in)** — `--unity` (or `code_ingest: {unity: true}` in `.kin/config`) indexes serialized assets (`.unity`, `.prefab`, `.asset`, `.mat`, `.controller`, `.anim`), sniffs text-vs-binary serialization, and attaches each asset's `.meta` GUID so models can resolve GUID-based references; `code_ingest.include_extensions` maps further extensions (e.g. `.shader: Unity Shader`)
+- **Project excludes** — `code_ingest.exclude` in `.kin/config` lists fnmatch globs to leave out, on top of the built-in excludes (`tests/*`, `vendor/*`, `node_modules/*`, Unity's `Library/*`, and the rest). Patterns match each file's path relative to the git repository root, so `client/Assets/Licensed/*` names the same files whether you ingest the root or `client/`; outside a repository they are relative to the ingested directory. `*` crosses `/`, so `*.mat` matches at any depth. The next full ingest retires the nodes of files a new pattern covers, the same way it retires deleted files, and leaves anything you archived by hand alone:
+
+  ```yaml
+  code_ingest:
+    unity: true
+    exclude:
+      - "client/Assets/Licensed/*"
+      - "*.mat"
+      - "*.prefab"
+  ```
 
 Code structure lives in the same graph as your decisions, watches, and constraints. Search finds both what calls a function and what broke last time someone changed it.
 

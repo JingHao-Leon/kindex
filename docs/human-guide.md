@@ -406,6 +406,22 @@ kin index
 kin export code-map --directory . --project-name kindex --output .kin/code-map.json
 ```
 
+To keep vendored or generated files out of the code graph, list them under
+`code_ingest.exclude` in `.kin/config`. The patterns add to the built-in
+excludes (`tests/*`, `vendor/*`, `node_modules/*`, and so on) and match each
+file's path relative to the repository root, whichever directory you ingest:
+
+```yaml
+code_ingest:
+  unity: true
+  exclude:
+    - "client/Assets/Licensed/*"
+    - "*.mat"
+```
+
+The next full `kin ingest code` retires nodes for files a new pattern covers.
+A run cut short by `--limit` retires nothing.
+
 ### Transfer a graph snapshot
 
 ```bash

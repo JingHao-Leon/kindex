@@ -156,6 +156,53 @@ def test_a_truncated_code_ingest_retires_nothing(store, tmp_path, local_code):
     assert len(live_code_titles(store)) == 8
 
 
+def set_code_ingest_exclude(repo, patterns):
+    (repo / ".kin").mkdir(exist_ok=True)
+    lines = "".join(f"    - '{pattern}'\n" for pattern in patterns)
+    (repo / ".kin" / "config").write_text(
+        "code_ingest:\n  exclude:\n" + lines if patterns else "code_ingest: {}\n")
+
+
+def test_code_ingest_retires_what_a_new_exclude_covers_and_restores_it_after(
+        store, tmp_path, local_code):
+    repo = tmp_path / "repo"
+    (repo / "pkg").mkdir(parents=True)
+    (repo / "licensed").mkdir()
+    (repo / "pkg" / "alpha.py").write_text("class Alpha:\n    pass\n")
+    (repo / "licensed" / "beta.py").write_text("class Beta:\n    pass\n")
+    (repo / "licensed" / "gamma.py").write_text("class Gamma:\n    pass\n")
+    code.adapter.ingest(store, directory=str(repo))
+    gamma = next(n for n in store.all_nodes(limit=50) if n["title"] == "Gamma")
+    store.update_node(gamma["id"], status="archived")
+    assert live_code_titles(store) == [
+        "Alpha", "Beta", "licensed/beta.py", "licensed/gamma.py", "pkg/alpha.py"]
+
+    set_code_ingest_exclude(repo, ["licensed/*"])
+    result = code.adapter.ingest(store, directory=str(repo))
+    assert live_code_titles(store) == ["Alpha", "pkg/alpha.py"]
+    # Beta, licensed/beta.py and licensed/gamma.py; Gamma was archived by hand.
+    assert any("retired 3" in warning for warning in result.warnings), result.warnings
+    assert "retired_by" not in (store.get_node(gamma["id"])["extra"] or {})
+
+    set_code_ingest_exclude(repo, [])
+    code.adapter.ingest(store, directory=str(repo))
+    assert live_code_titles(store) == [
+        "Alpha", "Beta", "licensed/beta.py", "licensed/gamma.py", "pkg/alpha.py"]
+    assert store.get_node(gamma["id"])["status"] == "archived"
+
+
+def test_an_exclude_covering_every_file_retires_them_all(store, tmp_path, local_code):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "only.py").write_text("class Only:\n    pass\n")
+    code.adapter.ingest(store, directory=str(repo))
+    assert live_code_titles(store) == ["Only", "only.py"]
+
+    set_code_ingest_exclude(repo, ["*.py"])
+    code.adapter.ingest(store, directory=str(repo))
+    assert live_code_titles(store) == []
+
+
 def assistant_line(text: str) -> str:
     return json.dumps({"type": "assistant",
                        "message": {"role": "assistant",

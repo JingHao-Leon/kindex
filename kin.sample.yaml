@@ -50,3 +50,14 @@ defaults:
 # Anthropic key before launch. Default: [ANTHROPIC_API_KEY].
 # sim:
 #   api_key_env: [MY_ORG_ANTHROPIC_API_KEY, ANTHROPIC_API_KEY]
+
+# Code ingest (`kin ingest code`). Usually set per project in the repo's
+# .kin/config, which wins over this file for that repo; set here it applies to
+# any repo whose .kin/config has no code_ingest section.
+# code_ingest:
+#   unity: false                   # index Unity assets (.unity/.prefab/.asset/.mat/...) and .meta GUIDs
+#   include_extensions: {}         # extra extensions to index, e.g. {".shader": "Unity Shader"}
+#   exclude:                       # fnmatch globs, ADDED to the built-in excludes (tests/*, vendor/*, Library/*, ...)
+#     - "client/Assets/Licensed/*" # relative to the git repo root, whichever directory is ingested
+#     - "*.mat"                    # '*' crosses '/', so this matches at any depth
+# Files a new exclude covers are retired on the next full ingest.

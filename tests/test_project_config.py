@@ -67,6 +67,52 @@ def test_code_ingest_defaults_off(tmp_path):
 
     assert cfg.code_ingest.unity is False
     assert cfg.code_ingest.include_extensions == {}
+    assert cfg.code_ingest.exclude == []
+
+
+def test_code_ingest_exclude_from_kin_config(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    _write_kin_config(
+        project,
+        "code_ingest:\n"
+        "  unity: true\n"
+        "  exclude:\n"
+        "    - '*/Assets/Licensed/*'\n"
+        "    - '*.mat'\n"
+        "    - '*.prefab'\n",
+    )
+
+    cfg = load_config(project_path=project)
+
+    assert cfg.code_ingest.unity is True
+    assert cfg.code_ingest.exclude == ["*/Assets/Licensed/*", "*.mat", "*.prefab"]
+
+
+def test_code_ingest_exclude_accepts_a_single_pattern(tmp_path):
+    # A bare string is one pattern. Rejecting it would make the adapter
+    # drop the whole code_ingest section, unity included, without a word.
+    project = tmp_path / "project"
+    project.mkdir()
+    _write_kin_config(project, "code_ingest:\n  unity: true\n  exclude: '*.mat'\n")
+
+    cfg = load_config(project_path=project)
+
+    assert cfg.code_ingest.unity is True
+    assert cfg.code_ingest.exclude == ["*.mat"]
+
+
+def test_code_ingest_empty_exclude_keeps_unity_on(tmp_path):
+    # An empty `exclude:` loads as None. It means no extra patterns; it must
+    # not fail validation and drop the section, which turns unity off.
+    project = tmp_path / "project"
+    project.mkdir()
+    _write_kin_config(project, "code_ingest:\n  unity: true\n  exclude:\n")
+
+    cfg = load_config(project_path=project)
+
+    assert cfg.code_ingest.unity is True
+    assert cfg.code_ingest.exclude == []
 
 
 def test_kin_project_config_inheritance_merges_lists_and_policy(tmp_path):

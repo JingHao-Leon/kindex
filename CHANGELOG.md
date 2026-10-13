@@ -5,6 +5,14 @@ All notable changes to Kindex are documented here. Format follows [Keep a Change
 ## [Unreleased]
 
 ### Added
+- `code_ingest.exclude` in `.kin/config` lists fnmatch globs that `kin ingest
+  code` leaves out, on top of the built-in and Unity excludes rather than in
+  place of them. Patterns match each file's path relative to the git
+  repository root, so `client/Assets/Licensed/*` names the same files whether
+  the ingest targets the root or `client/`. A single string is read as one
+  pattern and an empty `exclude:` as none. The next full ingest retires nodes for files a new pattern covers
+  and restores them if the pattern is removed; nodes archived by hand stay
+  archived, and a run cut short by `--limit` retires nothing.
 - `kin setup-muse-mcp` registers `kin-mcp` as an optional stdio server in Muse's
   `~/.config/muse/settings.json` (`--uninstall`, `--dry-run`). It refuses to write
   while a legacy `mcp_servers` key is present, because Muse then ignores every MCP
