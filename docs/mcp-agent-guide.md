@@ -373,6 +373,21 @@ Antigravity uses standalone MCP config files, so Kindex writes both
 prompt checks, PreToolUse advisory attention plus config-write permission
 gating, and Stop-time reinforcement enqueue.
 
+### Muse
+
+```bash
+kin setup-muse-mcp
+```
+
+Muse reads `~/.config/muse/settings.json` (camelCase `mcpServers`; never add a
+legacy `mcp_servers` key, which makes Muse drop every MCP server). Muse already
+loads Claude Code and Codex personal rules, so `kin setup-agents-md --install --global`
+covers its directives. Muse does not run Claude or Codex hooks, and Kindex does
+not yet install Muse-native hooks. Or hand-edit:
+```json
+{ "mcpServers": { "kindex": { "type": "stdio", "command": "/opt/homebrew/bin/kin-mcp", "args": [], "mode": "optional" } } }
+```
+
 ### OpenCode
 
 ```bash

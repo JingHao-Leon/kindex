@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/bin/bash -lc 'source ~/.profile >/dev/null 2>&1 || true; exec '\"'\"'${CLAUDE_PLUGIN_ROOT}/scripts/claude-plugin/kin'\"'\"' prime --for hook'",
+            "command": "/bin/bash -lc 'source ~/.profile >/dev/null 2>&1 || true; exec \"${CLAUDE_PLUGIN_ROOT}\"/scripts/claude-plugin/kin prime --for hook'",
             "timeout": 5
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/bin/bash -lc 'source ~/.profile >/dev/null 2>&1 || true; exec '\"'\"'${CLAUDE_PLUGIN_ROOT}/scripts/claude-plugin/kin'\"'\"' compact-hook'",
+            "command": "/bin/bash -lc 'source ~/.profile >/dev/null 2>&1 || true; exec \"${CLAUDE_PLUGIN_ROOT}\"/scripts/claude-plugin/kin compact-hook'",
             "timeout": 10
           }
         ]
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/bin/bash -lc 'source ~/.profile >/dev/null 2>&1 || true; exec '\"'\"'${CLAUDE_PLUGIN_ROOT}/scripts/claude-plugin/kin'\"'\"' prompt-check'",
+            "command": "/bin/bash -lc 'source ~/.profile >/dev/null 2>&1 || true; exec \"${CLAUDE_PLUGIN_ROOT}\"/scripts/claude-plugin/kin prompt-check'",
             "timeout": 2
           }
         ]
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/bin/bash -lc 'source ~/.profile >/dev/null 2>&1 || true; exec '\"'\"'${CLAUDE_PLUGIN_ROOT}/scripts/claude-plugin/kin'\"'\"' attention-hook --adapter claude --event PreToolUse --deadline-ms 3500'",
+            "command": "/bin/bash -lc 'source ~/.profile >/dev/null 2>&1 || true; exec \"${CLAUDE_PLUGIN_ROOT}\"/scripts/claude-plugin/kin attention-hook --adapter claude --event PreToolUse --deadline-ms 3500'",
             "timeout": 5
           }
         ]
@@ -54,17 +54,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/bin/bash -lc 'payload=$(cat); if printf '\"'\"'%s'\"'\"' \"$payload\" | python3 -c '\"'\"'import json,sys; raw=sys.stdin.read(); \ntry:\n data=json.loads(raw or '\"'\"'\"'\"'\"'\"'\"'\"'{}'\"'\"'\"'\"'\"'\"'\"'\"') if raw.strip() else {}\nexcept Exception:\n data={}\nsys.exit(0 if data.get('\"'\"'\"'\"'\"'\"'\"'\"'stop_hook_active'\"'\"'\"'\"'\"'\"'\"'\"') else 1)'\"'\"'; then exit 0; fi; source ~/.profile >/dev/null 2>&1 || true; printf '\"'\"'%s'\"'\"' \"$payload\" | '\"'\"'${CLAUDE_PLUGIN_ROOT}/scripts/claude-plugin/kin'\"'\"' compact-hook'",
+            "command": "/bin/bash -lc 'payload=$(cat); if printf '\"'\"'%s'\"'\"' \"$payload\" | python3 -c '\"'\"'import json,sys; raw=sys.stdin.read(); \ntry:\n data=json.loads(raw or '\"'\"'\"'\"'\"'\"'\"'\"'{}'\"'\"'\"'\"'\"'\"'\"'\"') if raw.strip() else {}\nexcept Exception:\n data={}\nsys.exit(0 if data.get('\"'\"'\"'\"'\"'\"'\"'\"'stop_hook_active'\"'\"'\"'\"'\"'\"'\"'\"') else 1)'\"'\"'; then exit 0; fi; source ~/.profile >/dev/null 2>&1 || true; printf '\"'\"'%s'\"'\"' \"$payload\" | \"${CLAUDE_PLUGIN_ROOT}\"/scripts/claude-plugin/kin compact-hook'",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "/bin/bash -lc 'payload=$(cat); if printf '\"'\"'%s'\"'\"' \"$payload\" | python3 -c '\"'\"'import json,sys; raw=sys.stdin.read(); \ntry:\n data=json.loads(raw or '\"'\"'\"'\"'\"'\"'\"'\"'{}'\"'\"'\"'\"'\"'\"'\"'\"') if raw.strip() else {}\nexcept Exception:\n data={}\nsys.exit(0 if data.get('\"'\"'\"'\"'\"'\"'\"'\"'stop_hook_active'\"'\"'\"'\"'\"'\"'\"'\"') else 1)'\"'\"'; then exit 0; fi; source ~/.profile >/dev/null 2>&1 || true; printf '\"'\"'%s'\"'\"' \"$payload\" | '\"'\"'${CLAUDE_PLUGIN_ROOT}/scripts/claude-plugin/kin'\"'\"' attention reinforce --enqueue'",
+            "command": "/bin/bash -lc 'payload=$(cat); if printf '\"'\"'%s'\"'\"' \"$payload\" | python3 -c '\"'\"'import json,sys; raw=sys.stdin.read(); \ntry:\n data=json.loads(raw or '\"'\"'\"'\"'\"'\"'\"'\"'{}'\"'\"'\"'\"'\"'\"'\"'\"') if raw.strip() else {}\nexcept Exception:\n data={}\nsys.exit(0 if data.get('\"'\"'\"'\"'\"'\"'\"'\"'stop_hook_active'\"'\"'\"'\"'\"'\"'\"'\"') else 1)'\"'\"'; then exit 0; fi; source ~/.profile >/dev/null 2>&1 || true; printf '\"'\"'%s'\"'\"' \"$payload\" | \"${CLAUDE_PLUGIN_ROOT}\"/scripts/claude-plugin/kin attention reinforce --enqueue'",
             "timeout": 3
           },
           {
             "type": "command",
-            "command": "/bin/bash -lc 'payload=$(cat); if printf '\"'\"'%s'\"'\"' \"$payload\" | python3 -c '\"'\"'import json,sys; raw=sys.stdin.read(); \ntry:\n data=json.loads(raw or '\"'\"'\"'\"'\"'\"'\"'\"'{}'\"'\"'\"'\"'\"'\"'\"'\"') if raw.strip() else {}\nexcept Exception:\n data={}\nsys.exit(0 if data.get('\"'\"'\"'\"'\"'\"'\"'\"'stop_hook_active'\"'\"'\"'\"'\"'\"'\"'\"') else 1)'\"'\"'; then exit 0; fi; source ~/.profile >/dev/null 2>&1 || true; printf '\"'\"'%s'\"'\"' \"$payload\" | '\"'\"'${CLAUDE_PLUGIN_ROOT}/scripts/claude-plugin/kin'\"'\"' dream --detach --lightweight'",
+            "command": "/bin/bash -lc 'payload=$(cat); if printf '\"'\"'%s'\"'\"' \"$payload\" | python3 -c '\"'\"'import json,sys; raw=sys.stdin.read(); \ntry:\n data=json.loads(raw or '\"'\"'\"'\"'\"'\"'\"'\"'{}'\"'\"'\"'\"'\"'\"'\"'\"') if raw.strip() else {}\nexcept Exception:\n data={}\nsys.exit(0 if data.get('\"'\"'\"'\"'\"'\"'\"'\"'stop_hook_active'\"'\"'\"'\"'\"'\"'\"'\"') else 1)'\"'\"'; then exit 0; fi; source ~/.profile >/dev/null 2>&1 || true; printf '\"'\"'%s'\"'\"' \"$payload\" | \"${CLAUDE_PLUGIN_ROOT}\"/scripts/claude-plugin/kin dream --detach --lightweight'",
             "timeout": 3
           }
         ]

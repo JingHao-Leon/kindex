@@ -23,6 +23,28 @@ def test_packaged_legacy_manifest_is_generated_from_installer():
                for entry in entries for h in entry["hooks"])
 
 
+def test_packaged_manifest_expands_plugin_root_in_hook_shell(tmp_path):
+    import subprocess
+    from kindex.claude_install import PACKAGED_PLUGIN_KIN
+    root = tmp_path / "plugin root"
+    shim = root / "scripts" / "claude-plugin" / "kin"
+    shim.parent.mkdir(parents=True)
+    log = tmp_path / "argv"
+    shim.write_text(f'#!/bin/sh\ncat >/dev/null\necho "$@" >> "{log}"\n')
+    shim.chmod(0o755)
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    manifest = legacy_manifest(Config(), PACKAGED_PLUGIN_KIN)
+    handlers = [h for entries in manifest.values() for entry in entries for h in entry["hooks"]]
+    for handler in handlers:
+        done = subprocess.run(["/bin/sh", "-c", handler["command"]], cwd=cwd, input="{}",
+                              capture_output=True, text=True, timeout=30,
+                              env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path),
+                                   "CLAUDE_PLUGIN_ROOT": str(root)})
+        assert done.returncode == 0, done.stderr
+    assert len(log.read_text().splitlines()) == len(handlers)
+
+
 def test_modern_switch_removes_only_owned_handlers_and_legacy_rolls_back(tmp_path, monkeypatch):
     import kindex.claude_install as installer
     import kindex.setup as setup

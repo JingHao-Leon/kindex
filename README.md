@@ -218,6 +218,21 @@ Or hand-edit `~/.gemini/config/mcp_config.json` and
 { "mcpServers": { "kindex": { "command": "kin-mcp", "args": [] } } }
 ```
 
+### Muse
+
+```bash
+kin setup-muse-mcp
+```
+
+Muse reads `~/.config/muse/settings.json` (camelCase `mcpServers`; never add a
+legacy `mcp_servers` key, which makes Muse drop every MCP server). Muse already
+loads Claude Code and Codex personal rules, so `kin setup-agents-md --install --global`
+covers its directives. Muse does not run Claude or Codex hooks, and Kindex does
+not yet install Muse-native hooks. Or hand-edit:
+```json
+{ "mcpServers": { "kindex": { "type": "stdio", "command": "/opt/homebrew/bin/kin-mcp", "args": [], "mode": "optional" } } }
+```
+
 ### OpenCode
 
 ```bash
@@ -1124,6 +1139,7 @@ coverage without silently discarding the operator diagnostic.
 | `kin setup-antigravity-hooks` | Install lifecycle hooks into Google Antigravity |
 | `kin setup-opencode-mcp` | Install kindex MCP server into OpenCode |
 | `kin setup-cursor-mcp` | Install kindex MCP server into Cursor |
+| `kin setup-muse-mcp` | Install kindex MCP server into Muse |
 | `kin setup-cron` | Install periodic maintenance + dedicated reminder-check job (launchd/crontab) |
 | `kin setup-claude-md` | Output/install recommended CLAUDE.md kindex directives |
 | `kin setup-agents-md` | Output/install recommended AGENTS.md kindex directives (Codex, OpenCode) |
@@ -1246,6 +1262,7 @@ reminders:
   default_channels: [system]     # system, slack, email, claude, terminal
   snooze_duration: 900           # 15 min default snooze
   auto_snooze_timeout: 300       # auto-snooze after 5 min inaction
+  auto_snooze_max: 86400         # repeated auto-snoozes double up to this cap
   max_action_overdue: 86400      # stale actions notify only; 0 disables guard
   idle_suppress_after: 600       # suppress if idle > 10 min
   stop_guard_enabled: false      # opt-in; blocking Stop hooks are noisy in Claude
