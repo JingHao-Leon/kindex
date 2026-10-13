@@ -3,6 +3,7 @@
 import json
 import os
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -31,16 +32,34 @@ def _kin_command_parts(kin_path: str) -> list[str]:
     return [kin_path]
 
 
+_PLUGIN_ROOT_VAR = "${CLAUDE_PLUGIN_ROOT}"
+
+
+def _shell_word(part: str) -> str:
+    """Quote one word for the hook script, leaving ${CLAUDE_PLUGIN_ROOT} expandable.
+
+    The packaged plugin's kin path starts with the variable; single-quoting it
+    hands bash the literal text, which resolves relative to the session's cwd.
+    """
+    if part.startswith(_PLUGIN_ROOT_VAR):
+        return f'"{_PLUGIN_ROOT_VAR}"' + shlex.quote(part[len(_PLUGIN_ROOT_VAR):])
+    return shlex.quote(part)
+
+
+def _kin_shell_command(kin_path: str, args: list[str]) -> str:
+    return " ".join(_shell_word(part) for part in [*_kin_command_parts(kin_path), *args])
+
+
 def _kin_hook_command(kin_path: str, args: list[str]) -> str:
     """Build a hook command that loads shell exports before running kin."""
-    command = " ".join(shlex.quote(part) for part in [*_kin_command_parts(kin_path), *args])
+    command = _kin_shell_command(kin_path, args)
     script = f"source ~/.profile >/dev/null 2>&1 || true; exec {command}"
     return f"/bin/bash -lc {shlex.quote(script)}"
 
 
 def _kin_stop_hook_command(kin_path: str, args: list[str]) -> str:
     """Build a Claude Stop hook command that avoids stop-hook recursion."""
-    command = " ".join(shlex.quote(part) for part in [*_kin_command_parts(kin_path), *args])
+    command = _kin_shell_command(kin_path, args)
     active_check = (
         "import json,sys; "
         "raw=sys.stdin.read(); "
@@ -610,6 +629,72 @@ def uninstall_opencode_mcp(config: "Config", dry_run: bool = False) -> list[str]
 
     settings_path.write_text(json.dumps(data, indent=2) + "\n")
     return [f"Removed OpenCode MCP server from {settings_path}"]
+
+
+def install_muse_mcp(config: "Config", dry_run: bool = False) -> list[str]:
+    """Install Kindex MCP server config into Muse's ~/.config/muse/settings.json.
+
+    Muse reads user MCP servers from the camelCase ``mcpServers`` key. If the
+    legacy ``mcp_servers`` key is also present, Muse drops the whole MCP member,
+    so Kindex refuses to write rather than add a server Muse would ignore.
+    ``mode: optional`` keeps a Kindex startup failure from blocking Muse. Muse
+    passes MCP children a small env allowlist, so the command is the absolute
+    ``kin-mcp`` path when it can be resolved.
+    """
+    settings_path = config.muse_path / "settings.json"
+    data = _read_json_object(settings_path)
+
+    if "mcp_servers" in data:
+        return [f"Refusing: {settings_path} has a legacy mcp_servers key; "
+                "Muse ignores all MCP servers while it is present. Merge it into mcpServers first."]
+
+    mcp_servers = data.setdefault("mcpServers", {})
+    if "kindex" in mcp_servers:
+        return ["Muse MCP server already installed"]
+
+    command = shutil.which("kin-mcp") or "kin-mcp"
+    mcp_servers["kindex"] = {
+        "type": "stdio",
+        "command": command,
+        "args": [],
+        "mode": "optional",
+    }
+
+    if dry_run:
+        return [
+            f"Would add Muse MCP server to {settings_path}",
+            f'Would configure: mcpServers.kindex = {{"type":"stdio","command":"{command}","args":[],"mode":"optional"}}',
+        ]
+
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps(data, indent=2) + "\n")
+    return [f"Added Muse MCP server: kindex -> {command}", f"Wrote {settings_path}"]
+
+
+def uninstall_muse_mcp(config: "Config", dry_run: bool = False) -> list[str]:
+    """Remove Kindex MCP config from Muse's settings.json."""
+    settings_path = config.muse_path / "settings.json"
+
+    if not settings_path.exists():
+        return ["No Muse settings.json found"]
+
+    data = _read_json_object(settings_path)
+    mcp_servers = data.get("mcpServers", {})
+
+    if "kindex" not in mcp_servers:
+        return ["No Kindex Muse MCP server found"]
+
+    if dry_run:
+        return [f"Would remove Muse MCP server from {settings_path}"]
+
+    del mcp_servers["kindex"]
+    if mcp_servers:
+        data["mcpServers"] = mcp_servers
+    else:
+        data.pop("mcpServers", None)
+
+    settings_path.write_text(json.dumps(data, indent=2) + "\n")
+    return [f"Removed Muse MCP server from {settings_path}"]
 
 
 # The Kindex OpenCode plugin. OpenCode has no settings-file hook LIST like Claude

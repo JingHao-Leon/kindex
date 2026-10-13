@@ -723,3 +723,78 @@ class TestSetupCron:
 
         assert actions == ["No launchd plist found"]
         run.assert_not_called()
+
+
+class TestSetupMuse:
+    def test_install_muse_mcp_preserves_settings(self, tmp_path):
+        from kindex.setup import install_muse_mcp
+
+        muse_dir = tmp_path / ".config" / "muse"
+        muse_dir.mkdir(parents=True)
+        settings = muse_dir / "settings.json"
+        settings.write_text(json.dumps({"schema_version": 1, "provider": "meta"}))
+
+        cfg = Config(data_dir=str(tmp_path), muse_dir=str(muse_dir))
+        actions = install_muse_mcp(cfg)
+
+        assert any("Muse MCP" in a for a in actions)
+        data = json.loads(settings.read_text())
+        assert data["provider"] == "meta"
+        server = data["mcpServers"]["kindex"]
+        assert server["type"] == "stdio"
+        assert server["command"].endswith("kin-mcp")
+        assert server["args"] == []
+        assert server["mode"] == "optional"
+        assert "mcp_servers" not in data
+
+    def test_install_muse_mcp_idempotent(self, tmp_path):
+        from kindex.setup import install_muse_mcp
+
+        cfg = Config(data_dir=str(tmp_path), muse_dir=str(tmp_path / "muse"))
+        install_muse_mcp(cfg)
+        assert any("already installed" in a for a in install_muse_mcp(cfg))
+
+    def test_install_muse_mcp_refuses_legacy_key(self, tmp_path):
+        from kindex.setup import install_muse_mcp
+
+        muse_dir = tmp_path / "muse"
+        muse_dir.mkdir()
+        settings = muse_dir / "settings.json"
+        original = json.dumps({"mcp_servers": {"other": {"command": "x"}}})
+        settings.write_text(original)
+
+        cfg = Config(data_dir=str(tmp_path), muse_dir=str(muse_dir))
+        actions = install_muse_mcp(cfg)
+
+        assert any("Refusing" in a for a in actions)
+        assert settings.read_text() == original
+
+    def test_install_muse_mcp_dry_run_does_not_write(self, tmp_path):
+        from kindex.setup import install_muse_mcp
+
+        muse_dir = tmp_path / "muse"
+        cfg = Config(data_dir=str(tmp_path), muse_dir=str(muse_dir))
+        actions = install_muse_mcp(cfg, dry_run=True)
+        assert any("Would add" in a for a in actions)
+        assert not (muse_dir / "settings.json").exists()
+
+    def test_uninstall_muse_mcp_preserves_other_servers(self, tmp_path):
+        from kindex.setup import uninstall_muse_mcp
+
+        muse_dir = tmp_path / "muse"
+        muse_dir.mkdir()
+        settings = muse_dir / "settings.json"
+        settings.write_text(json.dumps({
+            "provider": "meta",
+            "mcpServers": {
+                "kindex": {"type": "stdio", "command": "kin-mcp", "mode": "optional"},
+                "other": {"type": "stdio", "command": "other", "mode": "optional"},
+            },
+        }))
+
+        cfg = Config(data_dir=str(tmp_path), muse_dir=str(muse_dir))
+        uninstall_muse_mcp(cfg)
+
+        data = json.loads(settings.read_text())
+        assert data["provider"] == "meta"
+        assert list(data["mcpServers"]) == ["other"]

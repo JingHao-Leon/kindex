@@ -651,6 +651,10 @@ def _advance_recurring_locked(store: Store, reminder_id: str) -> str | None:
     if "action_snooze_until" in extra:
         del extra["action_snooze_until"]
         updates["extra"] = extra
+    if "auto_snooze_streak" in extra:
+        # Each occurrence starts its notification backoff over.
+        del extra["auto_snooze_streak"]
+        updates["extra"] = extra
     if extra.get("action_status") and extra["action_status"] not in ("running", "paused"):
         extra["action_status"] = "pending"
         updates["extra"] = extra
@@ -907,8 +911,19 @@ def _pause_action(store: Store, reminder_id: str) -> None:
     store.update_reminder(reminder_id, extra=extra)
 
 
+def auto_snooze_duration(config: Config, streak: int) -> int:
+    """Seconds for the automatic snooze after ``streak`` consecutive ones."""
+    base = config.reminders.snooze_duration
+    cap = max(base, config.reminders.auto_snooze_max)
+    # Bound the exponent so a long streak cannot overflow into a huge int.
+    return min(base * 2 ** min(streak, 32), cap)
+
+
 def auto_snooze_stale(store: Store, config: Config) -> int:
     """Find reminders in 'fired' status past auto_snooze_timeout, and snooze them.
+
+    Consecutive automatic snoozes back off exponentially (see
+    ``auto_snooze_duration``), so an ignored reminder nags less over time.
 
     Returns count of auto-snoozed reminders.
     """
@@ -916,7 +931,6 @@ def auto_snooze_stale(store: Store, config: Config) -> int:
         return 0
 
     timeout = config.reminders.auto_snooze_timeout
-    snooze_duration = config.reminders.snooze_duration
     now = _now_dt()
     cutoff = (now - datetime.timedelta(seconds=timeout)).isoformat(timespec="seconds")
 
@@ -934,10 +948,13 @@ def auto_snooze_stale(store: Store, config: Config) -> int:
         current = store.get_reminder(r["id"])
         if not current or current["status"] != "fired":
             continue
-        snooze_until = (now + datetime.timedelta(seconds=snooze_duration)).isoformat(
+        streak = (current.get("extra") or {}).get("auto_snooze_streak", 0)
+        duration = auto_snooze_duration(config, streak)
+        snooze_until = (now + datetime.timedelta(seconds=duration)).isoformat(
             timespec="seconds"
         )
-        if store.snooze_reminder(r["id"], snooze_until, automatic=True):
+        if store.snooze_reminder(r["id"], snooze_until, automatic=True,
+                                 expect_streak=streak):
             count += 1
 
     return count

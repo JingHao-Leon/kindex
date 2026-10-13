@@ -756,6 +756,11 @@ class ReminderConfig(BaseModel):
     default_channels: list[str] = Field(default_factory=lambda: ["system"])
     snooze_duration: int = 900
     auto_snooze_timeout: int = 300
+    # Each consecutive automatic snooze doubles the last, starting from
+    # snooze_duration, up to this cap. Without it an ignored reminder
+    # re-notified every 20 minutes indefinitely. Set equal to
+    # snooze_duration for the old fixed cadence.
+    auto_snooze_max: int = 86400
     idle_suppress_after: int = 600
     action_enabled: bool = True        # enable action execution on reminder fire
     # Never auto-execute an action overdue by more than this many seconds —
@@ -844,6 +849,7 @@ class Config(BaseModel):
     antigravity_cli_dir: str = "~/.gemini/antigravity-cli"
     opencode_dir: str = "~/.config/opencode"
     cursor_dir: str = "~/.cursor"
+    muse_dir: str = "~/.config/muse"
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     ask: AskConfig = Field(default_factory=AskConfig)
@@ -946,6 +952,10 @@ class Config(BaseModel):
         return _resolve_path(self.cursor_dir)
 
     @property
+    def muse_path(self) -> Path:
+        return _resolve_path(self.muse_dir)
+
+    @property
     def resolved_project_dirs(self) -> list[Path]:
         return [_resolve_path(d) for d in self.project_dirs]
 
@@ -1025,7 +1035,7 @@ _PROJECT_LAYER_UNTRUSTED_KEYS = frozenset({
     "sim", "llm", "embedding", "budget", "agents", "attention",
     "profiles", "default_profile",
     "project_dirs", "claude_dir", "codex_dir", "gemini_dir", "antigravity_dir",
-    "antigravity_cli_dir", "opencode_dir", "cursor_dir",
+    "antigravity_cli_dir", "opencode_dir", "cursor_dir", "muse_dir",
     "user", "agent_id",
     # LLM spend: how hard `kin ask` and conversation digests work.
     "ask", "conversations",
