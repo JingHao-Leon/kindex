@@ -306,3 +306,53 @@ def test_inherited_excludes_union_across_scalar_and_list_forms(
     assert set(_modules(store)) == {
         "Assets/Keep.asset", "Assets/Player.prefab", "Scripts/main.cs",
     }
+
+
+def test_empty_config_exclude_keeps_unity_and_builtin_excludes(
+        tmp_path, local_only, store):
+    # `exclude:` with no value is YAML null. It must read as no extra
+    # patterns, not invalidate the section and silently switch unity off.
+    repo = _make_vendored_unity_repo(tmp_path)
+    (repo / ".kin").mkdir()
+    (repo / ".kin" / "config").write_text("code_ingest:\n  unity: true\n  exclude:\n")
+
+    result = code.adapter.ingest(store, directory=str(repo))
+    assert result.errors == []
+    assert set(_modules(store)) == {
+        "Assets/Keep.asset", "Assets/Licensed/Vendor/Rock.asset",
+        "Assets/Licensed/Vendor/Rock.cs", "Assets/Player.prefab",
+        "Assets/Stone.mat", "Scripts/main.cs",
+    }
+
+
+def test_empty_child_exclude_keeps_inherited_patterns(tmp_path, local_only, store):
+    # An empty child `exclude:` adds nothing; it must not erase the parent's.
+    org = tmp_path / "org" / ".kin"
+    org.mkdir(parents=True)
+    (org / "config").write_text("code_ingest:\n  exclude:\n    - '*.mat'\n")
+    repo = _make_vendored_unity_repo(tmp_path)
+    (repo / ".kin").mkdir()
+    (repo / ".kin" / "config").write_text(
+        f"inherits:\n  - {org / 'config'}\n"
+        "code_ingest:\n  unity: true\n  exclude:\n"
+    )
+
+    result = code.adapter.ingest(store, directory=str(repo))
+    assert result.errors == []
+    assert "Assets/Stone.mat" not in _modules(store)
+    assert "Assets/Keep.asset" in _modules(store)
+
+
+def test_target_config_inherits_unity_opt_in(tmp_path, local_only, store):
+    # The target's .kin/config is read through its inherits chain, as
+    # load_config reads it, so a parent's unity opt-in reaches the child.
+    org = tmp_path / "org" / ".kin"
+    org.mkdir(parents=True)
+    (org / "config").write_text("code_ingest:\n  unity: true\n")
+    repo = _make_unity_repo(tmp_path)
+    (repo / ".kin").mkdir()
+    (repo / ".kin" / "config").write_text(f"inherits:\n  - {org / 'config'}\n")
+
+    result = code.adapter.ingest(store, directory=str(repo))
+    assert result.errors == []
+    assert "Assets/Player.prefab" in _modules(store)

@@ -814,8 +814,11 @@ class CodeIngestConfig(BaseModel):
     @field_validator("exclude", mode="before")
     @classmethod
     def _one_pattern_is_a_list(cls, value: Any) -> Any:
-        # A bare string is one pattern. Failing validation here would make
-        # the adapter fall back past the whole section, unity included.
+        # A bare string is one pattern, and an empty `exclude:` (None) is no
+        # patterns. Failing validation here would make the adapter fall back
+        # past the whole section, unity included.
+        if value is None:
+            return []
         return [value] if isinstance(value, str) else value
 
 
@@ -1740,12 +1743,18 @@ def _merge_kin_chain(chain: list[dict]) -> dict:
 
 
 def _normalize_kin_layer(layer: dict) -> dict:
-    # A bare-string code_ingest.exclude is one pattern. Listify it per layer
-    # so the merge unions it with another layer's list instead of replacing.
+    # A bare-string code_ingest.exclude is one pattern and an empty one
+    # (None) is none. Listify it per layer so the merge unions it with
+    # another layer's list instead of replacing it.
     section = layer.get("code_ingest")
-    if isinstance(section, dict) and isinstance(section.get("exclude"), str):
-        layer = {**layer, "code_ingest": {**section, "exclude": [section["exclude"]]}}
-    return layer
+    if not isinstance(section, dict) or "exclude" not in section:
+        return layer
+    value = section["exclude"]
+    if value is None:
+        value = []
+    elif isinstance(value, str):
+        value = [value]
+    return {**layer, "code_ingest": {**section, "exclude": value}}
 
 
 def _deep_merge_with_lists(base: dict, override: dict) -> dict:

@@ -102,6 +102,19 @@ def test_code_ingest_exclude_accepts_a_single_pattern(tmp_path):
     assert cfg.code_ingest.exclude == ["*.mat"]
 
 
+def test_code_ingest_empty_exclude_keeps_unity_on(tmp_path):
+    # An empty `exclude:` loads as None. It means no extra patterns; it must
+    # not fail validation and drop the section, which turns unity off.
+    project = tmp_path / "project"
+    project.mkdir()
+    _write_kin_config(project, "code_ingest:\n  unity: true\n  exclude:\n")
+
+    cfg = load_config(project_path=project)
+
+    assert cfg.code_ingest.unity is True
+    assert cfg.code_ingest.exclude == []
+
+
 def test_kin_project_config_inheritance_merges_lists_and_policy(tmp_path):
     org = tmp_path / "org"
     project = tmp_path / "project"
