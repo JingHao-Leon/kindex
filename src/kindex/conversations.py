@@ -520,6 +520,20 @@ def _write_claims(store: Store, conversation_id: str, pairs: list[tuple[dict, di
     return ids
 
 
+def _claims_key(chunks: list[dict]) -> str:
+    """What a conversation's claims were read from: a changed key means read them again."""
+    return hashlib.sha256(json.dumps([[c["content"], c["when"]] for c in chunks]).encode()).hexdigest()[:24]
+
+
+def _record_claims(store: Store, done: dict[str, str]) -> None:
+    store.set_meta("conversation_claims", json.dumps(done, sort_keys=True))
+
+
+def _claims_record(store: Store) -> dict[str, str]:
+    """conversation id -> the claims key its turn-level claims were read under."""
+    return json.loads(store.get_meta("conversation_claims") or "{}")
+
+
 def claims_enabled(config) -> bool:
     return bool(getattr(getattr(config, "conversations", None), "claims", False))
 
@@ -551,7 +565,8 @@ def digest_conversation(store: Store, conversation_id: str, text: str, when: str
         return out
     threshold = SUMMARY_MIN_TOKENS if summary_min_tokens is None else summary_min_tokens
     summarize = len(text) // 4 >= threshold
-    messages = conversation_messages(_chunk_rows(store, link_to or [])) if claims_enabled(config) else []
+    chunks = _chunk_rows(store, link_to or []) if claims_enabled(config) else []
+    messages = conversation_messages(chunks)
     claims = claims_enabled(config) and claims_apply(messages)
     facts = bool(getattr(getattr(config, "conversations", None), "facts", False)) and not claims
     what = "a conversation between a user and an assistant"
@@ -641,6 +656,10 @@ def digest_conversation(store: Store, conversation_id: str, text: str, when: str
         out["facts"].append(nid)
     if claims:
         out["facts"] = _write_claims(store, conversation_id, pairs)
+        # Recorded so backfill_claims (`kin digest --claims`) does not read them again.
+        done = _claims_record(store)
+        done[conversation_id] = _claims_key(chunks)
+        _record_claims(store, done)
     out["status"] = DigestStatus.DONE
     return out
 
@@ -734,11 +753,11 @@ def backfill_claims(store: Store, config, ledger=None, *, effort: str = "low", w
         cid = extra.get("conversation_id") or row[2] or row[1]
         convs.setdefault(cid, []).append(row[1])
         first[cid] = min(first.get(cid, row[0]), row[0])
-    done = json.loads(store.get_meta("conversation_claims") or "{}")
+    done = _claims_record(store)
     todo, keys = [], {}
     for cid in sorted(convs, key=lambda c: first[c]):
         chunks = _chunk_rows(store, convs[cid])
-        keys[cid] = hashlib.sha256(json.dumps([[c["content"], c["when"]] for c in chunks]).encode()).hexdigest()[:24]
+        keys[cid] = _claims_key(chunks)
         if done.get(cid) == keys[cid]:
             continue
         messages = conversation_messages(chunks)
@@ -777,7 +796,7 @@ def backfill_claims(store: Store, config, ledger=None, *, effort: str = "low", w
         _write_claims(store, cid, by_conv.get(cid, []))
         done[cid] = keys[cid]
         count += 1
-    store.set_meta("conversation_claims", json.dumps(done, sort_keys=True))
+    _record_claims(store, done)
     return count
 
 

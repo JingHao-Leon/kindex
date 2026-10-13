@@ -603,3 +603,27 @@ def test_named_dialogue_keeps_its_facts(store, tmp_path, monkeypatch):
     assert [f["content"] for f in facts] == ["Caroline went to a support group."]
     assert not any(f["extra"].get("turn_claim") for f in facts)
     assert conv.backfill_claims(store, _cfg(tmp_path, claims=True)) == 0 and len(calls) == 1
+
+
+def test_digest_claims_reads_each_conversations_claims_once(store, tmp_path, monkeypatch, capsys):
+    # `kin digest --claims` with conversations.claims on: the digest pass reads the
+    # claims, and the --claims pass must not read them a second time.
+    from argparse import Namespace
+
+    from kindex import cli, llm, vectors
+
+    client, calls = _fake_client(CLAIMS)
+    monkeypatch.setattr(llm, "get_client", lambda config, **kw: client)
+    monkeypatch.setattr(conv, "SUMMARY_MIN_TOKENS", 0)
+    monkeypatch.setattr(vectors, "drain_embedding_queue", lambda *a, **kw: None)
+    cfg = _cfg(tmp_path, claims=True)
+    monkeypatch.setattr(cli, "_store", lambda args: store)
+    monkeypatch.setattr(cli, "_ledger", lambda args: (None, cfg))
+    monkeypatch.setattr(store, "close", lambda: None)
+    conv.ingest_conversation(store, "c1", MESSAGES, "2024-03-10")
+
+    cli.cmd_digest(Namespace(claims=True))
+
+    assert [c["json_schema"]["name"] for c in calls].count("conversation_claims") == 1
+    assert "Gave 0 conversation(s) turn-level claims." in capsys.readouterr().out
+    assert conv.backfill_claims(store, cfg) == 0 and len(calls) == 2

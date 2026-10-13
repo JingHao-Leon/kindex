@@ -4221,7 +4221,8 @@ def cmd_cron(args):
 def cmd_digest(args):
     """Digest ingested conversations: standing directives and long-conversation summaries.
     With --claims, conversations digested before `conversations.claims` was on are given
-    turn-level claims in place of their facts (without digesting them again)."""
+    turn-level claims in place of their facts (without digesting them again); claims the
+    digest pass just read are not read a second time."""
     from .conversations import backfill_claims, backfill_digests, build_profiles
     from .vectors import drain_embedding_queue
 
