@@ -77,7 +77,7 @@ def test_public_command_counts_match_registered_surfaces():
     )
 
     assert f"{tool_count} MCP Tools" in docs
-    assert tool_count == 70
+    assert tool_count == 71
     assert len(card_tools) == len(set(card_tools)), "Server card lists duplicate MCP tools"
     assert set(card_tools) == set(tool_names)
     assert len(choices) >= 80

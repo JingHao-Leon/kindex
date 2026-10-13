@@ -2169,6 +2169,34 @@ def cmd_stale(args):
     store.close()
 
 
+# ── mask ──────────────────────────────────────────────────────────────
+
+def cmd_mask(args):
+    """Report (or with --apply, mask) known secret values already stored.
+
+    New writes are masked automatically once ``secret_mask`` is set in the
+    user config; this cleans rows written before. Output names keys and
+    locations, never values.
+    """
+    from .secret_mask import active
+    from .secret_scan import format_report, scan
+
+    store = _store(args)
+    try:
+        mask = active()
+        if mask is None:
+            print("Secret masking is off: add a secret_mask section (files: "
+                  "[~/.profile]) to ~/.config/kindex/kin.yaml.", file=sys.stderr)
+            sys.exit(1)
+        report = scan(store, mask, apply=args.apply)
+    finally:
+        store.close()
+    if args.json:
+        print(_dumps(report.model_dump(), indent=2))
+    else:
+        print(format_report(report))
+
+
 # ── git-hook ──────────────────────────────────────────────────────────
 
 def cmd_git_hook(args):
@@ -7371,6 +7399,16 @@ def build_parser() -> argparse.ArgumentParser:
                         "current state (clears its stale marker)")
     _common(s)
     s.set_defaults(func=cmd_stale)
+
+    # mask — known-secret masking maintenance
+    s = sub.add_parser("mask", help="Find or mask known secret values already stored")
+    mask_sub = s.add_subparsers(dest="mask_action", required=True)
+    ms = mask_sub.add_parser(
+        "scan", help="Count stored occurrences per key name (never values)")
+    ms.add_argument("--apply", action="store_true",
+                    help="Rewrite them as $NAME after a recovery snapshot")
+    _common(ms)
+    ms.set_defaults(func=cmd_mask)
 
     # learn
     s = sub.add_parser("learn", help="Extract knowledge from sessions/inbox")

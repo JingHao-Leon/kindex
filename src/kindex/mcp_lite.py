@@ -20,7 +20,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from .config import Config
+from .config import Config, activate_secret_mask, user_secret_mask
 from . import mcp_server
 from .privacy import redact, redact_serialized, safe_error
 from .project_store import project_data_path
@@ -195,9 +195,12 @@ def create_server(repo: str | Path, *, allow_kinbase_submit: bool = False,
     loaded. A missing local graph initializes on its first storage operation.
     Kinbase defaults to source reads. Its write-capable status and submission
     tools require explicit launcher opt-in; no_kinbase omits all Kinbase tools.
+    The one user setting read is ``secret_mask``: it only removes known secret
+    values, so it applies here as everywhere else Kindex writes.
     """
     if allow_kinbase_submit and no_kinbase:
         raise ValueError("allow_kinbase_submit and no_kinbase are mutually exclusive")
+    activate_secret_mask(user_secret_mask())
     scope = _RepoScope(repo)
     if no_kinbase:
         kinbase_tools = ()

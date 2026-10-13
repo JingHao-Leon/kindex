@@ -61,3 +61,11 @@ defaults:
 #     - "client/Assets/Licensed/*" # relative to the git repo root, whichever directory is ingested
 #     - "*.mat"                    # '*' crosses '/', so this matches at any depth
 # Files a new exclude covers are retired on the next full ingest.
+
+# Known-secret masking (optional, user config only). Values from these env
+# files are stored and shown as $NAME. Default keys: names containing KEY,
+# TOKEN, SECRET, PASSWORD, ... (see README "Masking Known Secrets").
+# secret_mask:
+#   files: [~/.profile]
+#   keys: [OPENAI_API_KEY, github, "AWS_*_KEY"]
+#   min_length: 8

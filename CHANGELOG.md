@@ -13,6 +13,17 @@ All notable changes to Kindex are documented here. Format follows [Keep a Change
   pattern and an empty `exclude:` as none. The next full ingest retires nodes for files a new pattern covers
   and restores them if the pattern is removed; nodes archived by hand stay
   archived, and a run cut short by `--limit` retires nothing.
+- Optional known-secret masking. `secret_mask: {files: [~/.profile]}` in the
+  user config makes every value of a selected `NAME=VALUE` line become `$NAME`
+  wherever Kindex stores or shows text: all store writes, ingestion, MCP tools,
+  hooks, FTS and embedding inputs, and every output path, so older rows come
+  out masked too. `keys` selects names (case-insensitive substring, `*` glob;
+  default: names containing KEY, TOKEN, SECRET, PASSWORD and similar) and
+  `min_length` (default 8) skips short values. A project's `.kin/config`
+  cannot set it. `kin mask scan` (MCP `mask_scan`) counts stored occurrences
+  per key name and location without printing values; `--apply` snapshots each
+  database, rewrites them, rebuilds FTS and requeues embeddings. kindex-lite
+  reads this one setting from the user config.
 - `kin setup-muse-mcp` registers `kin-mcp` as an optional stdio server in Muse's
   `~/.config/muse/settings.json` (`--uninstall`, `--dry-run`). It refuses to write
   while a legacy `mcp_servers` key is present, because Muse then ignores every MCP
