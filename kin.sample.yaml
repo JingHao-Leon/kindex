@@ -50,3 +50,11 @@ defaults:
 # Anthropic key before launch. Default: [ANTHROPIC_API_KEY].
 # sim:
 #   api_key_env: [MY_ORG_ANTHROPIC_API_KEY, ANTHROPIC_API_KEY]
+
+# Known-secret masking (optional, user config only). Values from these env
+# files are stored and shown as $NAME. Default keys: names containing KEY,
+# TOKEN, SECRET, PASSWORD, ... (see README "Masking Known Secrets").
+# secret_mask:
+#   files: [~/.profile]
+#   keys: [OPENAI_API_KEY, github, "AWS_*_KEY"]
+#   min_length: 8

@@ -2,7 +2,9 @@
 
 This is not an entropy detector, a secret vault, or a historical cleanup tool.
 It recognizes credential formats and explicit credential-bearing fields. Ordinary
-hashes, IDs, email addresses and IP addresses are preserved. Never use this on
+hashes, IDs, email addresses and IP addresses are preserved. Known secret values
+the user lists in ``secret_mask`` files are masked as their key names first
+(see ``secret_mask``). Never use this on
 operational authentication headers; use it on stored data and model/log output.
 """
 
@@ -14,6 +16,8 @@ import logging
 import re
 import traceback
 from typing import Any
+
+from .secret_mask import mask as mask_known_secrets
 
 POLICY_VERSION = "credentials-v1"
 REDACTED = "[REDACTED]"
@@ -82,9 +86,14 @@ def _hidden(value: str) -> str:
 
 
 def redact_text(text: str) -> str:
-    """Redact recognizable credentials, preserving nonsecret text and shape."""
+    """Redact recognizable credentials, preserving nonsecret text and shape.
+
+    Known secret values from the user's ``secret_mask`` files become ``$NAME``
+    first, so an assignment of a masked value reads as a safe placeholder.
+    """
     if not isinstance(text, str) or not text:
         return text
+    text = mask_known_secrets(text)
     text = _PRIVATE_KEY.sub(REDACTED, text)
     text = _HEADER.sub(lambda m: m["prefix"] + REDACTED, text)
     text = _KEY_DECLARATION.sub(lambda m: m["prefix"] + _hidden(m["value"]), text)

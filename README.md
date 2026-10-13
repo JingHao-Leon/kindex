@@ -1090,6 +1090,7 @@ coverage without silently discarding the operator diagnostic.
 | `kin set-audience <id> <scope>` | Set privacy scope (private/team/org/public) |
 | `kin set-state <id> <key> <value>` | Set mutable state on directives/watches |
 | `kin export` | Audience-aware graph export with PII stripping |
+| `kin mask scan` | Count stored known-secret values per key name (`--apply` masks them) |
 | `kin export code-map` | Repo-relative code map for dashboards, code navigation, and agent tooling |
 | `kin import <file>` | Import nodes/edges from JSON/JSONL (--mode merge/replace) |
 | `kin sync-links` | Update node content with connection references |
@@ -1277,6 +1278,46 @@ were historically stored identically. This change does not classify or repair
 an existing reminder backlog.
 
 Use `kin attention estimate --messages 1000` to estimate cost over a fixed prompt window. Conversation accounting is retained when a client provides a stable session id. Hook-driven attention does not fall back to cwd as a fake conversation id, because that would cross-pollute two chats open in the same repo.
+
+### Masking Known Secrets
+
+Point Kindex at the env files that hold your secrets, such as `~/.profile`, and
+it replaces any of their values with the key name before it stores or shows
+text: `sk-...` becomes `$OPENAI_API_KEY`. This covers every write (add, learn,
+edit, supersede, ingestion, MCP tools, hooks, so FTS and embeddings never see
+the value) and every output (prime, context, search, show, MCP responses), so
+rows written before you turned it on also come out masked.
+
+```yaml
+# ~/.config/kindex/kin.yaml only; a project's .kin/config cannot set or weaken it
+secret_mask:
+  files: [~/.profile]
+  # keys: [OPENAI_API_KEY, github, "AWS_*_KEY"]  # optional, see below
+  # min_length: 8
+```
+
+Kindex reads `[export ]NAME=VALUE` lines, strips matching quotes and an
+unquoted value's trailing ` #comment`, and skips values containing `$` or a
+backtick and values shorter than `min_length`. A `keys` entry matches any name
+containing it, ignoring case, and `*` matches any run of characters, so a full
+name selects itself. Without `keys`, names containing any of `KEY`, `TOKEN`,
+`SECRET`, `PASSWORD`, `PASSWD`, `PASS`, `PW`, `CREDENTIAL`, `AUTH`, `PRIVATE`,
+`SID`, `DSN`, `WEBHOOK`, `COOKIE`, `CLIENT_ID`, `ACCOUNT_ID` or `API` are
+selected. Longer values are replaced first; when several names share a value,
+the first in file order wins. Files are re-read when they change; a missing or
+unreadable file masks nothing and logs one warning.
+
+Stored rows keep their bytes until you clean them:
+
+```bash
+kin mask scan          # occurrences per key name and table.column, never values
+kin mask scan --apply  # snapshot, rewrite as $NAME, rebuild FTS, requeue embeddings
+```
+
+`--apply` also cleans node archives. It snapshots each database first, like
+automated merges; the snapshot still holds the old values, so delete it once
+you have checked the result. Identifiers (primary and foreign keys) are
+reported, not rewritten.
 
 ## Development
 

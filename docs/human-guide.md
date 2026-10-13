@@ -348,6 +348,39 @@ wanted changes made after it. Reversible per-merge receipts (restore just the
 merged node) are the R3 line item in
 `docs/prd-lineage-grounding-2026-08.md`.
 
+## Mask Known Secrets
+
+Kindex already redacts recognizable credential formats. To guarantee it never
+keeps a secret you know about, name the files that hold them in your own
+config (`~/.config/kindex/kin.yaml`; a project's `.kin/config` cannot set,
+weaken or disable this):
+
+```yaml
+secret_mask:
+  files: [~/.profile]
+  # keys: [OPENAI_API_KEY, github, "AWS_*_KEY"]  # default: names containing KEY, TOKEN, SECRET, ...
+  # min_length: 8
+```
+
+Any value from a selected `NAME=VALUE` line becomes `$NAME` wherever Kindex
+stores or shows text. See the README's Masking Known Secrets section for the
+parsing and key-selection rules.
+
+Rows written before you enabled it are masked on output but still stored. Clean
+them with:
+
+```bash
+kin mask scan           # counts per key name and table.column, never values
+kin mask scan --apply   # rewrite as $NAME after a recovery snapshot
+```
+
+`--apply` snapshots each database first (see the next section for where
+snapshots live and how to restore), rewrites matching cells with SQLite's
+`secure_delete` on, rebuilds the FTS index, requeues changed nodes for
+embedding and records a `secret_mask_apply` entry in `kin changelog`. The
+snapshot keeps the unmasked values; delete it after checking the result.
+Identifiers that contain a secret are listed for you to rename, not rewritten.
+
 ## Use Reminders
 
 Reminders are stored in Kindex and fired by a checker. Creating a reminder does

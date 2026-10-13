@@ -296,6 +296,13 @@ Do not capture trivial file reads, routine git status output, obvious
 boilerplate, private secrets, duplicate knowledge, or every step of a
 transcript. Capture what should help a future agent or future user.
 
+When the user sets `secret_mask` in `~/.config/kindex/kin.yaml`, values from
+the env files it names (such as `~/.profile`) are stored and shown as `$NAME`.
+Refer to a secret by that name; never try to recover the value. `mask_scan()`
+reports stored occurrences by key name, and `mask_scan(apply=True)` rewrites
+them after a recovery snapshot. A project's `.kin/config` cannot set or weaken
+`secret_mask`.
+
 ## Recommended Startup Behavior
 
 1. `tag_start` or `tag_resume`

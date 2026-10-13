@@ -11,6 +11,9 @@ from typing import Any, Callable, Iterator, Literal
 import yaml
 from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
+from .secret_mask import SecretMaskConfig
+from .secret_mask import configure as configure_secret_mask
+
 
 # ── Config-resolution test seam (V1, AMENDMENT 1 contract) ──────────────
 # A process-local binding that overrides HOME and all config/data paths.
@@ -856,6 +859,9 @@ class Config(BaseModel):
     reminders: ReminderConfig = Field(default_factory=ReminderConfig)
     work_policy: WorkPolicyConfig = Field(default_factory=WorkPolicyConfig)
     code_ingest: CodeIngestConfig = Field(default_factory=CodeIngestConfig)
+    # Mask known secret values (from env files such as ~/.profile) as $NAME
+    # wherever Kindex stores or shows text. User config only; absent = off.
+    secret_mask: SecretMaskConfig | None = None
     # Sequestered multi-profile storage. Profiles live in the GLOBAL kin.yaml:
     #   profiles: {work: {data_dir: ~/.kindex-work, roots: [~/Work]}}
     #   default_profile: personal
@@ -1028,6 +1034,8 @@ _PROJECT_LAYER_UNTRUSTED_KEYS = frozenset({
     "project_dirs", "claude_dir", "codex_dir", "gemini_dir", "antigravity_dir",
     "antigravity_cli_dir", "opencode_dir", "cursor_dir", "muse_dir",
     "user", "agent_id",
+    # Known-secret masking: a clone may neither switch it off nor weaken it.
+    "secret_mask",
     # LLM spend: how hard `kin ask` and conversation digests work.
     "ask", "conversations",
 })
@@ -1084,7 +1092,41 @@ def load_config(
     `profile:` key from the .kin chain > longest-prefix cwd match against
     profile roots > default_profile > legacy (active_profile stays None and
     data_dir is untouched).
+
+    Loading also installs the process-wide secret mask from the result's
+    ``secret_mask`` (user config only; see ``secret_mask.configure``).
     """
+    cfg = _load_config(config_path, project_path, profile, data_dir)
+    activate_secret_mask(cfg.secret_mask)
+    return cfg
+
+
+def activate_secret_mask(settings: SecretMaskConfig | None) -> None:
+    """Install (or, for None, remove) the process-wide known-secret mask."""
+    configure_secret_mask(settings, resolve=_resolve_path)
+
+
+def user_secret_mask() -> SecretMaskConfig | None:
+    """The ``secret_mask`` section of the user's own config file, if any.
+
+    For surfaces that load no ambient config (kindex-lite): masking only
+    removes data, so it follows the user wherever Kindex writes.
+    """
+    for path in _effective_global_paths():
+        path = _contained_resolve(path)
+        if path is not None and path.is_file():
+            raw = yaml.safe_load(path.read_text()) or {}
+            value = raw.get("secret_mask") if isinstance(raw, dict) else None
+            return SecretMaskConfig(**value) if isinstance(value, dict) else None
+    return None
+
+
+def _load_config(
+    config_path: str | Path | None,
+    project_path: str | Path | None,
+    profile: str | None,
+    data_dir: str | Path | None,
+) -> Config:
     project_root = resolve_project_root(project_path)
 
     if config_path:

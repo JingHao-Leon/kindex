@@ -2624,6 +2624,30 @@ def stale_check(base_dir: str = "", rebind: str = "") -> str:
 
 
 @_tool()
+def mask_scan(apply: bool = False) -> str:
+    """Find (or mask) known secret values already stored in the graph.
+
+    Requires ``secret_mask`` in the user's ~/.config/kindex/kin.yaml (env
+    files such as ~/.profile whose values are secrets). New writes are masked
+    as ``$NAME`` automatically; this reports rows written before, by key name
+    and location, never values.
+
+    Args:
+        apply: Rewrite the matches as ``$NAME`` after a recovery snapshot
+            (the snapshot keeps the old values; the report names it).
+    """
+    from .secret_mask import active
+    from .secret_scan import format_report, scan
+
+    store, _ = _get_store()
+    mask = active()
+    if mask is None:
+        return ("Secret masking is off: add a secret_mask section (files: "
+                "[~/.profile]) to ~/.config/kindex/kin.yaml.")
+    return format_report(scan(store, mask, apply=apply))
+
+
+@_tool()
 def graph_merge(source_id: str, target_id: str, keep: str = "target",
                 force: bool = False) -> str:
     """Merge two nodes that represent the same concept.
