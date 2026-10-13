@@ -184,22 +184,30 @@ def is_configured(config: Config) -> bool:
 
 # Reasoning efforts, highest first. Models differ in which they take (gpt-5 and
 # o4-mini reject "xhigh"; gpt-4o and gpt-4.1 take no effort at all): a rejected
-# effort is retried one step lower, or without one, and the model's limit is
-# remembered so later calls start from what it accepts. "none" (no reasoning) is
-# sent only when asked for; a rejected "minimal" drops the effort instead.
+# effort is retried one step lower, or without one, and what the model rejected
+# is remembered so later calls start from what it accepts. "none" (no reasoning)
+# is sent only when asked for; a rejected "minimal" drops the effort instead.
+# Each rejected level is remembered on its own, so a model that rejects a low
+# effort ("minimal", "none") still gets the higher efforts it takes.
 _LADDER = ("xhigh", "high", "medium", "low", "minimal")
 _EFFORTS = _LADDER + ("none",)
-_EFFORT_LIMITS: dict[str, str | None] = {}  # model -> highest accepted effort; None: takes none
+_EFFORT_LIMITS: dict[str, None] = {}  # models that take no effort at all
+_EFFORT_REJECTED: dict[str, set[str]] = {}  # model -> efforts it rejected
+
+
+def _lower_effort(effort: str) -> str | None:
+    """One step down the ladder; None below "minimal" (and for "none")."""
+    return _LADDER[_LADDER.index(effort) + 1] if effort in _LADDER[:-1] else None
 
 
 def _effort_for(model: str, effort: str | None) -> str | None:
-    if not effort or model not in _EFFORT_LIMITS:
+    if not effort:
         return effort
-    limit = _EFFORT_LIMITS[model]
-    if limit is None:
+    if model in _EFFORT_LIMITS:
         return None
-    if effort in _EFFORTS and limit in _EFFORTS and _EFFORTS.index(effort) < _EFFORTS.index(limit):
-        return limit
+    rejected = _EFFORT_REJECTED.get(model, ())
+    while effort is not None and effort in rejected:
+        effort = _lower_effort(effort)
     return effort
 
 
@@ -302,11 +310,15 @@ class _OpenAIResponsesMessages:
             except urllib.error.HTTPError as exc:
                 rejected = _effort_rejection(exc) if exc.code == 400 and "reasoning" in payload else None
                 if rejected:
-                    # The model does not take this effort: one step lower, or none.
+                    # The model does not take this effort: one step lower (skipping
+                    # levels it already rejected), or none.
                     current = payload["reasoning"]["effort"]
-                    lower = (_LADDER[_LADDER.index(current) + 1]
-                             if rejected == "value" and current in _LADDER[:-1] else None)
-                    _EFFORT_LIMITS[model] = lower
+                    if rejected == "value":
+                        _EFFORT_REJECTED.setdefault(model, set()).add(current)
+                        lower = _effort_for(model, current)
+                    else:
+                        _EFFORT_LIMITS[model] = None
+                        lower = None
                     if lower:
                         payload["reasoning"] = {"effort": lower}
                     else:
