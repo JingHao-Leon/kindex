@@ -427,7 +427,6 @@ class AskConfig(BaseModel):
     rank_order: bool = False         # evidence in ranked order (most relevant first) rather than by date
     position_labels: bool = False    # label each excerpt with its session and place in it, not only its date
     fact_sources: bool = False       # show a fact with the message it came from (where recorded)
-    hint_mode: Literal["add", "lead", "lead_first", "lead_both"] = "add"  # an asker's hints: added to the answering rules, or in their place (after, before, or around the evidence)
     max_input_tokens: int = Field(default=20000, ge=0, le=400000)  # cap on estimated input over all calls for one answer (0: none)
     details: bool = True            # a question asking for particulars is answered only from particulars stated
     verify: bool = False             # one cited draft, then a check against original source chunks

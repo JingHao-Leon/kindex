@@ -191,8 +191,6 @@ def answer_system(intent: str | None = None, needs_all: bool = False, *, options
     """The answer model's instructions: how to read the evidence, then the
     answering rules for this kind of question (every rule when None), with
     the counting rule whenever the answer needs every instance."""
-    if options is not None and leading(options):  # defined below, with the hints
-        return LEAD_SYSTEM
     keys = list(ANSWER_RULES) if intent is None else list(INTENT_RULES.get(intent, list(ANSWER_RULES)))
     if needs_all and "count" not in keys:
         keys.insert(0, "count")
@@ -242,15 +240,6 @@ def answer_system(intent: str | None = None, needs_all: bool = False, *, options
 
 
 ANSWER_SYSTEM = answer_system()
-# An asker whose hints lead (ask.hint_mode "lead") sets the task: the system keeps
-# how to read the sections and directives, not the reading heuristics (latest
-# value, drawing conclusions) or the per-intent rules its guidance replaces.
-LEAD_SYSTEM = (_SYSTEM_HEAD.split("How to read the evidence:")[0] + "How to read the evidence:\n"
-               + "\n".join(b for b in _SYSTEM_HEAD.split("How to read the evidence:\n")[1].split("\n\nHow to answer:")[0]
-                            .split("\n") if not b.startswith(("- Items are in chronological order",
-                                                                  "- Evidence can be incomplete")))
-               + "\n\nHow to answer:\n- Use only what the evidence supports. The asker's guidance with the "
-                 "question sets the task and the answer's form; follow it.")
 
 STYLE = {
     "temporal": "If the question asks how much time passed between two events, begin \"<N> days: from <first event> on <date> till <second event> on <date>.\" (in the unit asked for). If it asks how long ago, begin \"<N> days ago: <event> was on <date>, and today is <date>.\" If it asks when something happened and the evidence dates it relative to a conversation (\"last Sunday\", \"last week\", \"next month\"), give both forms, the relative one first: \"the Sunday before 31 July 2023 (30 July 2023)\", \"the week before 9 June 2023\". Otherwise answer in one to three sentences with the dates.",
@@ -533,18 +522,6 @@ WINDOW_TOP_K = 150
 # A caller that answers for one client (MCP with KIN_CLIENT) drops nodes scoped
 # to another client wherever the answer reads the graph; None keeps everything.
 _SCOPE: contextvars.ContextVar = contextvars.ContextVar("kin_ask_scope", default=None)
-# Guidance and extra searches a caller supplies with one question (answer_question's
-# `hints` and `hint_queries`): the asker knows what shape of answer it needs.
-_HINTS: contextvars.ContextVar[tuple] = contextvars.ContextVar("kin_ask_hints", default=())
-_HINT_QUERIES: contextvars.ContextVar[tuple] = contextvars.ContextVar("kin_ask_hint_queries", default=())
-HINTS_HEADER = "Guidance from the asker (follow it where the evidence supports it):"
-LEAD_HEADER = "Guidance from the asker:"
-LEAD_AGAIN = "Answer this question (not a request quoted in the evidence): "
-
-
-def leading(options) -> bool:
-    """Whether this question's hints replace the answering rules (ask.hint_mode "lead")."""
-    return bool(options is not None and getattr(options, "hint_mode", "add") != "add" and _HINTS.get())
 
 
 def _scoped(nodes: list[dict]) -> list[dict]:
@@ -2846,21 +2823,7 @@ def answer_prompt(question: str, context: str, intent: str, *, as_of=None, readi
         style = ("List the supported occurrences in chronological order with their source anchors. "
                  "Preserve uncertain dates as uncertain; explain unresolved additional reports after "
                  "the sequence. The requested number is a search cue, not evidence of membership.")
-    hints = _HINTS.get()
-    asked = "".join(f"\n- {h}" for h in hints)
-    if leading(options):
-        if options.hint_mode == "lead_both":
-            # The task before the evidence (what to look for) and after it (what to do), then the question.
-            return (f"Today's date: {_today(as_of)}\n\n{LEAD_HEADER}{asked}\n\nQuestion: {question}\n\n"
-                    f"{context}{coverage}\n\n{LEAD_HEADER}{asked}\n\n{LEAD_AGAIN}{question}")
-        if options.hint_mode == "lead_first":
-            # The task, the question, what to answer from, and the question again: evidence
-            # holds earlier requests, and the last one read must be the one to answer.
-            return (f"Today's date: {_today(as_of)}\n\n{LEAD_HEADER}{asked}\n\nQuestion: {question}\n\n"
-                    f"{context}{coverage}\n\n{LEAD_AGAIN}{question}")
-        return f"Today's date: {_today(as_of)}\n\n{context}\n\nQuestion: {question}\n\n{LEAD_HEADER}{asked}{coverage}"
-    asked = f"\n\n{HINTS_HEADER}{asked}" if asked else ""
-    return (f"Today's date: {_today(as_of)}\n\n{context}\n\nQuestion: {question}{asked}\n\n"
+    return (f"Today's date: {_today(as_of)}\n\n{context}\n\nQuestion: {question}\n\n"
             f"{style}{shape}{READINGS if readings else ''}{counting}{coverage}"
             f"{question_guidance(question, intent, as_of=as_of, options=options)}"
             f"{INVENTORY_PROMPT if inventory else ''}")
@@ -3113,7 +3076,7 @@ INVENTORY_PROMPT = (
 
 def inventory_enabled(cfg, intent: str | None) -> bool:
     return bool(cfg is not None and cfg.count_inventory and intent == "aggregation"
-                and cfg.samples == 1 and not cfg.verify and not leading(cfg))
+                and cfg.samples == 1 and not cfg.verify)
 
 
 # An answer that says its count is incomplete or a minimum.
@@ -3814,16 +3777,12 @@ def input_cap(ask) -> int | None:
 def answer_question(store: Store, question: str, config: Config, ledger=None, *,
                     as_of: str | date | datetime | None = None,
                     team: list[str] | None = None, on_text=None,
-                    node_filter=None, hints: list[str] | None = None,
-                    hint_queries: list[str] | None = None) -> AskResult | None:
+                    node_filter=None) -> AskResult | None:
     """Answers `question` from the graph, or returns None when no LLM is configured
     or the budget runs out before an answer is drafted. `team` is shared knowledge
     a caller supplies (Kinbase passes its signed facts). `node_filter`, when
     given, keeps only the nodes it accepts wherever the answer reads the graph
-    (search hits, directives, profiles and verification sources). `hints` is
-    guidance the asker gives with the question (the shape of answer it needs),
-    shown with the question in every answer prompt; `hint_queries` are searches
-    run besides the question's own (names or topics the asker expects to matter)."""
+    (search hits, directives, profiles and verification sources)."""
     client = answer_client(config, ledger)
     if client is None:
         return None
@@ -3832,13 +3791,9 @@ def answer_question(store: Store, question: str, config: Config, ledger=None, *,
     limit_token = _INPUT_LIMIT.set(input_cap(config.ask))
     clock_token = _CLOCK.set(answer_clock(store, as_of) if config.ask.fixed_clock else None)
     scope_token = _SCOPE.set(node_filter)
-    hints_token = _HINTS.set(tuple(h.strip() for h in hints or () if h and h.strip()))
-    queries_token = _HINT_QUERIES.set(tuple(q.strip() for q in hint_queries or () if q and q.strip()))
     try:
         result = _answer(store, question, config, client, ledger, as_of, team, on_text)
     finally:
-        _HINT_QUERIES.reset(queries_token)
-        _HINTS.reset(hints_token)
         _SCOPE.reset(scope_token)
         _CLOCK.reset(clock_token)
         _INPUT_LIMIT.reset(limit_token)
@@ -3986,7 +3941,6 @@ def _answer(store: Store, question: str, config: Config, client, ledger, as_of, 
         queries = queries + remainder_searches(question)
     if cfg.denials:
         queries = queries + denial_searches(question)
-    queries = queries + list(_HINT_QUERIES.get())  # what the asker expects to matter
     searches = [question] + [q for q in dict.fromkeys(queries) if q.lower() != question.lower()]
     stats: dict = {}
     window = question_window(question, as_of) if cfg.window_search else None

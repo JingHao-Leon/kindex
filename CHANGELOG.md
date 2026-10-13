@@ -22,10 +22,6 @@ All notable changes to Kindex are documented here. Format follows [Keep a Change
   `surface_first_asked` (the earliest matching statement instead of the
   latest), and `evidence_only` (return the assembled evidence with no answer
   or verification call).
-- `answer_question` takes `hints` (guidance shown with the question) and
-  `hint_queries` (extra searches) from a calling program; `ask.hint_mode`
-  (`add`, the default, or `lead`, `lead_first`, `lead_both`) decides whether
-  the hints join the answering rules or replace them.
 - Reasoning effort `none` is accepted by `ask.effort`, `plan_effort` and
   `hard_effort`.
 

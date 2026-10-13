@@ -2,7 +2,7 @@
 position_labels, fact_sources; and queueing many nodes for embedding at once."""
 
 from kindex import answer
-from kindex.config import AskConfig, Config
+from kindex.config import Config
 from kindex.store import Store
 
 
@@ -60,52 +60,3 @@ def test_enqueue_embeddings_writes_the_queue_once(tmp_path, monkeypatch):
     finally:
         store.close()
 
-
-def test_hints_reach_the_answer_prompt_only_for_that_question():
-    token = answer._HINTS.set(("List these topics in order: A, B.",))
-    try:
-        prompt = answer.answer_prompt("What came first?", "ctx", "ordering")
-    finally:
-        answer._HINTS.reset(token)
-    assert answer.HINTS_HEADER in prompt and "- List these topics in order: A, B." in prompt
-    assert prompt.index("What came first?") < prompt.index(answer.HINTS_HEADER)
-    assert answer.HINTS_HEADER not in answer.answer_prompt("What came first?", "ctx", "ordering")
-
-
-def test_leading_hints_replace_the_answering_rules():
-    options = AskConfig(hint_mode="lead")
-    token = answer._HINTS.set(("Report the value as first stated.",))
-    try:
-        system = answer.answer_system("fact", True, options=options)
-        prompt = answer.answer_prompt("What did I say?", "ctx", "fact", options=options)
-    finally:
-        answer._HINTS.reset(token)
-    assert system == answer.LEAD_SYSTEM and "most recent statement" not in system
-    assert prompt.endswith(f"{answer.LEAD_HEADER}\n- Report the value as first stated.")
-    assert answer.DEFAULT_STYLE not in prompt
-    # Without hints, or with hints added, the rules stay.
-    assert answer.answer_system("fact", True, options=options) != answer.LEAD_SYSTEM
-    assert answer.answer_system("fact", True, options=AskConfig()) != answer.LEAD_SYSTEM
-
-
-def test_leading_first_puts_the_task_first_and_the_question_last():
-    options = AskConfig(hint_mode="lead_first")
-    token = answer._HINTS.set(("Cover these aspects: A.",))
-    try:
-        prompt = answer.answer_prompt("Summarize my project.", "EVIDENCE", "summary", options=options)
-    finally:
-        answer._HINTS.reset(token)
-    assert prompt.index(answer.LEAD_HEADER) < prompt.index("EVIDENCE")
-    assert prompt.endswith(f"{answer.LEAD_AGAIN}Summarize my project.")
-
-
-def test_leading_both_puts_the_task_around_the_evidence():
-    options = AskConfig(hint_mode="lead_both")
-    token = answer._HINTS.set(("Say there is no record if it is absent.",))
-    try:
-        prompt = answer.answer_prompt("What did I pay?", "EVIDENCE", "fact", options=options)
-    finally:
-        answer._HINTS.reset(token)
-    first, second = (i for i in range(len(prompt)) if prompt.startswith(answer.LEAD_HEADER, i))
-    assert first < prompt.index("EVIDENCE") < second
-    assert prompt.endswith(f"{answer.LEAD_AGAIN}What did I pay?")
