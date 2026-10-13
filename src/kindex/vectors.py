@@ -986,12 +986,32 @@ def enqueue_embedding(store: Store, node_id: str, *, max_queue: int = 100000,
 
 
 def enqueue_embeddings(store: Store, node_ids: list[str], *, max_queue: int = 100000) -> int:
-    """Queue many node IDs for re-embedding, deduping and preserving order."""
-    added = 0
-    for node_id in node_ids:
-        if enqueue_embedding(store, node_id, max_queue=max_queue):
-            added += 1
-    return added
+    """Queue many node IDs for re-embedding, deduping and preserving order, in one
+    queue write: queueing node by node rewrites the whole queue each time, which
+    grows quadratically when thousands of nodes are added at once."""
+    ids = [n for n in dict.fromkeys(node_ids) if n]
+    if not ids:
+        return 0
+    queue = _load_embedding_queue(store)
+    quarantine = _load_embedding_quarantine(store)
+    fingerprint = None
+    for node_id in ids:
+        record = quarantine.get(node_id)
+        if record:
+            node = _read_node_for_embedding(store, node_id)
+            text = _embedding_text_for_node(node) if node else ""
+            fingerprint = fingerprint or embedding_fingerprint(store.config)
+            if not text or not _quarantine_matches(record, text_hash=_hash_text(text), fingerprint=fingerprint):
+                # As in enqueue_embedding: a record for an earlier text or config is stale.
+                quarantine.pop(node_id)
+    moved = set(ids)
+    # As enqueue_embedding: each queued id moves to the tail, the newest edit last.
+    queue = [n for n in queue if n not in moved] + ids
+    try:
+        _write_embedding_meta(store, queue[-max_queue:], quarantine, commit=True)
+        return len(ids)
+    except Exception:
+        return 0
 
 
 def _embedding_queue_len(store: Store) -> int:

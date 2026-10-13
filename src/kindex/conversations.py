@@ -355,13 +355,204 @@ class DigestStatus:
     FAILED = "failed"            # the call or its answer failed: retry later
 
 
+# ── Turn-level claims (conversations.claims) ──
+#
+# A per-conversation fact list loses which message said what and in what order.
+# Claims are read message by message instead: every claim names the message it
+# came from, so `kin ask` can show it with that message's place in the
+# conversation and its words, find the first or the latest of several similar
+# statements, and keep what was said after a moment out of an answer about it.
+
+CLAIM_WINDOW = 40            # messages per claims call (a longer conversation takes several calls)
+CLAIM_MESSAGE_CHARS = 4000   # the most of one message a claims call reads
+CLAIM_EXCERPT_CHARS = 280    # the source words kept with a claim
+
+CLAIMS_PROMPT = """Below are numbered messages from a conversation, each labelled with its date and speaker. List the atomic claims a question asked months later could be answered from, each tied to the number of the message it comes from:
+- what a speaker said about themselves, other people and their world: facts, numbers, amounts, versions, names, dates, plans and deadlines, decisions, preferences, and changes to earlier values (kind "update": "the estate tax estimate is now 12%, earlier 15%");
+- what a speaker asked about or asked for, with the specifics they gave (values, examples, formulas, items, constraints) (kind "request");
+- an assistant's specific recommendations, steps, lists, answers and figures (kind "recommendation"), one claim per distinct step or point, keeping the specifics.
+Each claim is one self-contained sentence: name the people, places and things instead of using pronouns, keep exact values and units, and resolve relative dates against the message's date. For each give: m, the message number; kind (fact, plan, decision, preference, update, request, recommendation); subject, who it is about ("user", "assistant", or a person's name); date, when it happened or is due as YYYY-MM-DD (or a period), empty if undated; text, the claim.
+
+Messages:
+{messages}"""
+
+CLAIMS_SCHEMA = {"name": "conversation_claims", "schema": {
+    "type": "object", "additionalProperties": False, "required": ["claims"],
+    "properties": {"claims": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False, "required": ["m", "kind", "subject", "date", "text"],
+        "properties": {"m": {"type": "integer"}, "kind": {"type": "string"}, "subject": {"type": "string"},
+                       "date": {"type": "string"}, "text": {"type": "string"}}}}}}}
+
+_ROLE_START = re.compile(r"^(user|assistant|system)(?: \(([^)\n]{1,40})\))?: ")
+_NAME_START = re.compile(r"^([A-Z][^:\n]{0,39}): ")
+_CLAIM_WORD = re.compile(r"[a-z0-9][a-z0-9.%$'-]*")
+
+
+def _chunk_rows(store: Store, ids: list[str]) -> list[dict]:
+    """The stored chunks, in conversation order: by recorded position, else by insertion."""
+    rows = []
+    for nid in ids:
+        row = store.conn.execute("SELECT rowid, id, content, prov_when, extra FROM nodes WHERE id = ?",
+                                 (nid,)).fetchone()
+        if row:
+            extra = json.loads(row[4] or "{}")
+            rows.append({"rowid": row[0], "id": row[1], "content": row[2] or "", "when": row[3],
+                         "position": extra.get("position"), "expires": extra.get("expires")})
+    rows.sort(key=lambda r: (r["position"] if isinstance(r["position"], int) else 10**9, r["rowid"]))
+    for i, r in enumerate(rows):
+        if not isinstance(r["position"], int):
+            r["position"] = i
+    return rows
+
+
+def conversation_messages(chunks: list[dict]) -> list[dict]:
+    """The messages of a conversation's chunks, in order: each with the position of
+    the chunk it starts in, that chunk's id, its speaker and its text. A line opens
+    a message when it starts with a role ("user: ", "assistant (Ana): ") or with a
+    name that opens lines more than once ("Caroline: "), so a quoted "Note: " inside
+    a message does not split it; a chunk that starts mid-message continues it."""
+    names: dict[str, int] = {}
+    for c in chunks:
+        for line in c["content"].split("\n"):
+            m = _NAME_START.match(line)
+            if m and not _ROLE_START.match(line):
+                names[m.group(1)] = names.get(m.group(1), 0) + 1
+    speakers = {n for n, k in names.items() if k > 1}
+    out: list[dict] = []
+    for c in chunks:
+        for line in c["content"].split("\n"):
+            role = _ROLE_START.match(line)
+            name = None if role else _NAME_START.match(line)
+            if role or (name and name.group(1) in speakers):
+                m = role or name
+                out.append({"position": c["position"], "chunk": c["id"], "when": c["when"],
+                            "expires": c.get("expires"), "speaker": m.group(0)[:-2],
+                            "role": role.group(1) if role else "", "text": line[m.end():]})
+            elif out:
+                out[-1]["text"] += "\n" + line
+    for m in out:
+        m["text"] = m["text"].strip()
+    return [m for m in out if m["text"]]
+
+
+def _claim_excerpt(text: str, claim: str) -> str:
+    """The source words around the densest run of the claim's words."""
+    if len(text) <= CLAIM_EXCERPT_CHARS:
+        return text
+    keys = {w for w in _CLAIM_WORD.findall(claim.lower()) if len(w) > 2}
+    best, at = -1, 0
+    for start in range(0, len(text) - CLAIM_EXCERPT_CHARS + 1, 40):
+        score = sum(w in keys for w in _CLAIM_WORD.findall(text[start:start + CLAIM_EXCERPT_CHARS].lower()))
+        if score > best:
+            best, at = score, start
+    return ("…" if at else "") + text[at:at + CLAIM_EXCERPT_CHARS].strip() + "…"
+
+
+def claim_windows(messages: list[dict], window: int = CLAIM_WINDOW) -> list[list[dict]]:
+    """Messages grouped for claims calls: about `window` at a time, closing a group
+    at a conversation boundary once it is full (short conversations share a call),
+    or mid-conversation once it reaches twice that."""
+    groups: list[list[dict]] = []
+    cur: list[dict] = []
+    for m in messages:
+        if cur and (len(cur) >= window and m["conversation_id"] != cur[-1]["conversation_id"]
+                    or len(cur) >= 2 * window):
+            groups.append(cur)
+            cur = []
+        cur.append(m)
+    if cur:
+        groups.append(cur)
+    return groups
+
+
+def _read_claims(client, config, ledger, window: list[dict], effort: str) -> list[tuple[dict, dict]] | None:
+    """One claims call over a window of messages: (claim, its message) pairs; None
+    when the call or its answer failed (the caller retries later)."""
+    from .answer import BudgetExhausted, _call
+
+    listing = "\n\n".join(f"[{i}] ({m['when'] or 'undated'}) {m['speaker']}: {m['text'][:CLAIM_MESSAGE_CHARS]}"
+                          for i, m in enumerate(window, 1))
+    try:
+        raw = _call(client, config, system=None, ledger=ledger, purpose="conversation-claims",
+                    user=CLAIMS_PROMPT.format(messages=listing), effort=effort, max_tokens=32000,
+                    json_schema=CLAIMS_SCHEMA)
+        claims = json.loads(raw).get("claims")
+        if not isinstance(claims, list):
+            raise ValueError("claims is not a list")
+    except BudgetExhausted:
+        raise
+    except Exception:
+        return None
+    pairs = []
+    for c in claims:
+        i = c.get("m") if isinstance(c, dict) else None
+        if isinstance(i, int) and 1 <= i <= len(window) and str(c.get("text") or "").strip():
+            pairs.append((c, window[i - 1]))
+    return pairs
+
+
+def _write_claims(store: Store, conversation_id: str, pairs: list[tuple[dict, dict]]) -> list[str]:
+    """Replaces the conversation's facts (or earlier claims) with these claims, linked
+    to their source chunks, and queues them for embedding in one write."""
+    from .vectors import enqueue_embeddings
+
+    for node in _conversation_nodes(store, conversation_id, ("conversation-fact",)):
+        store.delete_node(node["id"])
+    ids = []
+    for k, (c, msg) in enumerate(pairs):
+        text = str(c["text"]).strip()
+        nid = "convclaim-" + hashlib.sha256(f"{conversation_id}|{k}".encode()).hexdigest()[:16]
+        extra = {"conversation_id": conversation_id, "kind": "conversation-fact", "turn_claim": True,
+                 "fact_date": str(c.get("date") or "").strip(),
+                 "subject": str(c.get("subject") or ("user" if msg["role"] == "user" else msg["speaker"])).strip(),
+                 "claim_kind": str(c.get("kind") or "").strip(),
+                 "source": {"position": msg["position"], "role": msg["role"] or msg["speaker"],
+                            "excerpt": _claim_excerpt(msg["text"], text)}}
+        if msg.get("expires"):
+            extra["expires"] = msg["expires"]
+        store.add_node(node_id=nid, title=text[:60].strip() + ("..." if len(text) > 60 else ""),
+                       content=text, node_type="document", prov_source=conversation_id,
+                       prov_activity="conversation-digest", prov_when=msg["when"], extra=extra,
+                       queue_embedding=False)
+        store.add_edge(nid, msg["chunk"], edge_type="relates_to", provenance="claim from message")
+        ids.append(nid)
+    enqueue_embeddings(store, ids, max_queue=max(100_000, 4 * len(ids)))
+    return ids
+
+
+def _claims_key(chunks: list[dict]) -> str:
+    """What a conversation's claims were read from: a changed key means read them again."""
+    return hashlib.sha256(json.dumps([[c["content"], c["when"]] for c in chunks]).encode()).hexdigest()[:24]
+
+
+def _record_claims(store: Store, done: dict[str, str]) -> None:
+    store.set_meta("conversation_claims", json.dumps(done, sort_keys=True))
+
+
+def _claims_record(store: Store) -> dict[str, str]:
+    """conversation id -> the claims key its turn-level claims were read under."""
+    return json.loads(store.get_meta("conversation_claims") or "{}")
+
+
+def claims_enabled(config) -> bool:
+    return bool(getattr(getattr(config, "conversations", None), "claims", False))
+
+
+def claims_apply(messages: list[dict]) -> bool:
+    """Claims are read for user/assistant transcripts. Dialogue between named people
+    keeps its per-conversation facts: measured on such dialogue, claims in their place
+    answered worse (they lose the inference a whole-conversation read keeps)."""
+    return any(m["role"] in ("user", "assistant") for m in messages)
+
+
 def digest_conversation(store: Store, conversation_id: str, text: str, when: str | None, config, ledger=None,
                         *, effort: str = "low", link_to: list[str] | None = None,
                         summary_min_tokens: int | None = None, expires: str | None = None) -> dict:
     """One model pass over a conversation: its standing instructions become `directive`
     nodes, and, for a conversation of at least `summary_min_tokens`, its summary a
     `document` node linked to the conversation's nodes (with `conversations.facts`,
-    its dated facts too). `status` says whether it was done (see DigestStatus);
+    its dated facts too; with `conversations.claims`, turn-level claims read message
+    by message in their place). `status` says whether it was done (see DigestStatus);
     nothing is written unless it was."""
     from .answer import BudgetExhausted, _call
     from .llm import get_client
@@ -374,7 +565,10 @@ def digest_conversation(store: Store, conversation_id: str, text: str, when: str
         return out
     threshold = SUMMARY_MIN_TOKENS if summary_min_tokens is None else summary_min_tokens
     summarize = len(text) // 4 >= threshold
-    facts = bool(getattr(getattr(config, "conversations", None), "facts", False))
+    chunks = _chunk_rows(store, link_to or []) if claims_enabled(config) else []
+    messages = conversation_messages(chunks)
+    claims = claims_enabled(config) and claims_apply(messages)
+    facts = bool(getattr(getattr(config, "conversations", None), "facts", False)) and not claims
     what = "a conversation between a user and an assistant"
     if not summarize and not facts:
         # Directives are the user's: a short conversation is read from the user's side only.
@@ -396,6 +590,19 @@ def digest_conversation(store: Store, conversation_id: str, text: str, when: str
     except Exception:
         out["status"] = DigestStatus.FAILED
         return out
+    pairs: list[tuple[dict, dict]] = []
+    if claims:
+        for m in messages:
+            m["conversation_id"] = conversation_id
+        try:
+            for window in claim_windows(messages):
+                got = _read_claims(client, config, ledger, window, effort)
+                if got is None:
+                    out["status"] = DigestStatus.FAILED
+                    return out
+                pairs += got
+        except BudgetExhausted:
+            return out
     # Whatever an earlier, interrupted run of this digest wrote is replaced as a
     # whole, so its outputs are never mixed with these.
     _remove_digest(store, conversation_id)
@@ -447,6 +654,12 @@ def digest_conversation(store: Store, conversation_id: str, text: str, when: str
         for target in link_to or []:
             store.add_edge(nid, target, edge_type="relates_to", provenance="fact from conversation")
         out["facts"].append(nid)
+    if claims:
+        out["facts"] = _write_claims(store, conversation_id, pairs)
+        # Recorded so backfill_claims (`kin digest --claims`) does not read them again.
+        done = _claims_record(store)
+        done[conversation_id] = _claims_key(chunks)
+        _record_claims(store, done)
     out["status"] = DigestStatus.DONE
     return out
 
@@ -463,6 +676,9 @@ def _digest_key(nodes: list[dict], config) -> str:
     changing means the conversation should be digested again."""
     features = {"facts": bool(getattr(getattr(config, "conversations", None), "facts", False)),
                 "summary_min_tokens": SUMMARY_MIN_TOKENS, "version": 2}
+    if claims_enabled(config):
+        # Only when on, so turning claims on re-digests and every existing key stays valid.
+        features["claims"] = 1
     revision = [(n.get("content") or "", n.get("prov_when") or "", (n.get("extra") or {}).get("expires"))
                 for n in nodes]
     return hashlib.sha256(json.dumps([features, revision], sort_keys=True).encode()).hexdigest()[:24]
@@ -506,8 +722,81 @@ def backfill_digests(store: Store, config, ledger=None, *, max_chars: int = 400_
         done[cid] = key
         store.set_meta("conversation_digests", json.dumps(done, sort_keys=True))
         count += 1
-    if getattr(getattr(config, "conversations", None), "facts", False):
+    if getattr(getattr(config, "conversations", None), "facts", False) or claims_enabled(config):
         build_profiles(store, config, ledger)
+    return count
+
+
+def backfill_claims(store: Store, config, ledger=None, *, effort: str = "low", workers: int = 1,
+                    activities: tuple[str, ...] = ("conversation-ingest",)) -> int:
+    """Gives conversations that were digested before `conversations.claims` turn-level
+    claims in place of their per-conversation facts, without digesting them again (their
+    summaries and directives stay). Short conversations share a claims call; a
+    conversation is recorded as done only when all of its claims were read, so one
+    that failed is retried next time. With `workers` > 1 the claims calls run concurrently
+    (the store is written once they are all read). Returns the number of conversations given claims."""
+    from .answer import BudgetExhausted
+    from .llm import get_client
+
+    if not config.llm.enabled or (ledger is not None and not ledger.can_spend()):
+        return 0
+    client = get_client(config, timeout=config.ask.timeout_seconds, retries=3)
+    if client is None:
+        return 0
+    convs: dict[str, list[str]] = {}
+    first: dict[str, int] = {}
+    for row in store.conn.execute(
+            "SELECT rowid, id, prov_source, extra, prov_activity FROM nodes WHERE type = 'document'").fetchall():
+        extra = json.loads(row[3] or "{}")
+        if row[4] not in activities or extra.get("kind") in ("conversation-summary", "conversation-fact"):
+            continue
+        cid = extra.get("conversation_id") or row[2] or row[1]
+        convs.setdefault(cid, []).append(row[1])
+        first[cid] = min(first.get(cid, row[0]), row[0])
+    done = _claims_record(store)
+    todo, keys = [], {}
+    for cid in sorted(convs, key=lambda c: first[c]):
+        chunks = _chunk_rows(store, convs[cid])
+        keys[cid] = _claims_key(chunks)
+        if done.get(cid) == keys[cid]:
+            continue
+        messages = conversation_messages(chunks)
+        if not claims_apply(messages):
+            continue  # named dialogue keeps its facts
+        for m in messages:
+            m["conversation_id"] = cid
+            todo.append(m)
+    by_conv: dict[str, list[tuple[dict, dict]]] = {}
+    failed: set[str] = set()
+    windows = claim_windows(todo)
+
+    def read(window):
+        try:
+            return window, _read_claims(client, config, ledger, window, effort)
+        except BudgetExhausted:
+            return window, None
+
+    if workers > 1:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(workers) as pool:
+            results = list(pool.map(read, windows))
+    else:
+        results = [read(w) for w in windows]
+    for window, got in results:
+        if got is None:
+            failed |= {m["conversation_id"] for m in window}
+            continue
+        for c, m in got:
+            by_conv.setdefault(m["conversation_id"], []).append((c, m))
+    count = 0
+    for cid in dict.fromkeys(m["conversation_id"] for m in todo):
+        if cid in failed:
+            continue
+        _write_claims(store, cid, by_conv.get(cid, []))
+        done[cid] = keys[cid]
+        count += 1
+    _record_claims(store, done)
     return count
 
 

@@ -3294,3 +3294,22 @@ def test_the_default_ask_configuration_is_f25():
 
     defaults = AskConfig()
     assert {name: getattr(defaults, name) for name in F25_ASK} == F25_ASK
+
+
+def test_evidence_only_skips_verification(store, tmp_path, monkeypatch):
+    # evidence_only returns the evidence for the caller to answer from: with verify
+    # also on, it must draft, audit and render nothing.
+    monkeypatch.setattr(answer_mod, "gather", lambda *a, **kw: [store.get_node("k1")])
+    fake = VerificationMessages([])
+    monkeypatch.setattr(answer_mod, "get_client", lambda *a, **kw: SimpleNamespace(messages=fake))
+
+    def refuse(*a, **kw):
+        raise AssertionError("evidence_only ran verification")
+
+    monkeypatch.setattr(answer_mod, "verify_answer", refuse)
+    monkeypatch.setattr(answer_mod, "plain_draft", refuse)
+    result = answer_mod.answer_question(store, "Where was my first kayak trip?",
+                                        _config(tmp_path, verify=True, evidence_only=True))
+    assert result.answer == "" and fake.calls == []
+    assert "first kayak trip was on the river" in result.context
+    assert "Source r1" not in result.context  # the plain answer's evidence, not the cited draft's

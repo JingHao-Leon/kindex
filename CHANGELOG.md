@@ -18,8 +18,26 @@ All notable changes to Kindex are documented here. Format follows [Keep a Change
   while a legacy `mcp_servers` key is present, because Muse then ignores every MCP
   server, and uses the absolute `kin-mcp` path because Muse passes MCP children a
   small environment allowlist.
+- Turn-level conversation claims (`conversations.claims`, off by default).
+  `kin digest` reads a user/assistant conversation message by message and
+  records atomic claims in place of its per-conversation facts, each tied to
+  the message it came from (its place in the conversation and its words).
+  Dialogue between named speakers keeps its facts. `kin digest --claims` gives
+  conversations digested earlier claims without digesting them again.
+- `kin ask` options, all off by default: `ask.rank_order` (evidence most
+  relevant first), `position_order`, `position_labels`, `fact_sources` (a
+  claim shown with the words it came from), `surface_first` /
+  `surface_first_asked` (the earliest matching statement instead of the
+  latest), and `evidence_only` (return the assembled evidence with no answer
+  or verification call).
+- Reasoning effort `none` is accepted by `ask.effort`, `plan_effort` and
+  `hard_effort`.
 
 ### Fixed
+- A model that rejects a low reasoning effort (`minimal`, `none`) keeps the
+  higher efforts it accepts. The rejection used to mark the model as taking no
+  effort at all, so every later call on it, high-effort ones included, was
+  sent without one.
 - An ignored reminder no longer re-notifies every 20 minutes forever. Each
   consecutive automatic snooze doubles the last (15 min, 30 min, 1 h, ...) up
   to `reminders.auto_snooze_max` (default 24 h). A manual snooze, or a

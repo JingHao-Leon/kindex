@@ -508,3 +508,122 @@ def test_ingest_honours_limit_and_since(store, tmp_path):
     assert store.get_node(conv.chunk_id("c2", 0)) is None
     assert adapter.ingest(store, directory=str(d), limit=10, since="2024-04-01").created == 1
     assert store.get_node(conv.chunk_id("c3", 0)) is not None and store.get_node(conv.chunk_id("c2", 0)) is None
+
+
+# ── Turn-level claims (conversations.claims) ──
+
+CLAIMS = {"directives": [], "summary": "A kayak purchase.", "claims": [
+    {"m": 1, "kind": "fact", "subject": "user", "date": "2024-03-10", "text": "The user bought a red kayak for $450."},
+    {"m": 3, "kind": "preference", "subject": "user", "date": "", "text": "The user wants distances in kilometres."},
+    {"m": 9, "kind": "fact", "subject": "user", "date": "", "text": "Out of range: dropped."},
+]}
+
+
+def test_messages_split_on_roles_and_recurring_names_only():
+    chunks = [{"id": "a", "position": 0, "when": "d", "content": "Caroline: Hi Mel!\nMelanie: Hey!\nNote: not a speaker"},
+              {"id": "b", "position": 1, "when": "d", "content": "still Melanie\nCaroline: Bye\nMelanie: Bye!"}]
+    msgs = conv.conversation_messages(chunks)
+    assert [(m["speaker"], m["position"]) for m in msgs] == [
+        ("Caroline", 0), ("Melanie", 0), ("Caroline", 1), ("Melanie", 1)]
+    assert msgs[1]["text"] == "Hey!\nNote: not a speaker\nstill Melanie"
+    roles = conv.conversation_messages([{"id": "c", "position": 0, "when": "d",
+                                         "content": "user: hello\nassistant (Ana): hi\nmore"}])
+    assert [(m["speaker"], m["role"], m["text"]) for m in roles] == [
+        ("user", "user", "hello"), ("assistant (Ana)", "assistant", "hi\nmore")]
+
+
+def test_claim_windows_share_short_conversations_and_split_long_ones():
+    msgs = [{"conversation_id": c} for c in ["a"] * 3 + ["b"] * 3 + ["c"] * 9]
+    assert [len(w) for w in conv.claim_windows(msgs, window=4)] == [6, 8, 1]
+
+
+def test_digest_with_claims_ties_each_claim_to_its_message(store, tmp_path, monkeypatch):
+    from kindex import llm
+
+    client, calls = _fake_client(CLAIMS)
+    monkeypatch.setattr(llm, "get_client", lambda config, **kw: client)
+    monkeypatch.setattr(conv, "SUMMARY_MIN_TOKENS", 0)
+    ids = conv.ingest_conversation(store, "c1", MESSAGES, "2024-03-10")
+    assert conv.backfill_digests(store, _cfg(tmp_path, claims=True)) == 1
+    assert [c["json_schema"]["name"] for c in calls] == ["conversation_digest", "conversation_claims"]
+    assert "- facts:" not in calls[0]["messages"][0]["content"]  # claims replace the session facts
+    claims = sorted((n for n in store.all_nodes(node_type="document", limit=100)
+                     if (n.get("extra") or {}).get("turn_claim")), key=lambda n: n["content"])
+    assert [n["content"] for n in claims] == ["The user bought a red kayak for $450.",
+                                              "The user wants distances in kilometres."]
+    kayak, km = claims
+    assert kayak["extra"]["source"] == {"position": 0, "role": "user", "excerpt": "I bought a red kayak for $450."}
+    assert km["extra"]["source"]["position"] == 2 and km["extra"]["kind"] == "conversation-fact"
+    assert {e["to_id"] for e in store.edges_from(kayak["id"])} == {ids[0]}
+    from kindex.vectors import _load_embedding_queue
+    assert {kayak["id"], km["id"]} <= set(_load_embedding_queue(store))
+    assert conv.backfill_digests(store, _cfg(tmp_path, claims=True)) == 0
+
+
+def test_backfill_claims_replaces_facts_once(store, tmp_path, monkeypatch):
+    from kindex import llm
+
+    client, calls = _fake_client({"directives": [], "facts": [{"date": "", "subject": "user",
+                                                              "text": "A session-level fact."}]})
+    monkeypatch.setattr(llm, "get_client", lambda config, **kw: client)
+    conv.ingest_conversation(store, "c1", MESSAGES, "2024-03-10")
+    assert conv.backfill_digests(store, _cfg(tmp_path, facts=True)) == 1
+    client2, calls2 = _fake_client(CLAIMS)
+    monkeypatch.setattr(llm, "get_client", lambda config, **kw: client2)
+    assert conv.backfill_claims(store, _cfg(tmp_path, facts=True)) == 1
+    facts = [n["content"] for n in store.all_nodes(node_type="document", limit=100)
+             if (n.get("extra") or {}).get("kind") == "conversation-fact"]
+    assert sorted(facts) == ["The user bought a red kayak for $450.", "The user wants distances in kilometres."]
+    assert conv.backfill_claims(store, _cfg(tmp_path, facts=True)) == 0 and len(calls2) == 1
+
+
+def test_a_failed_claims_call_writes_nothing(store, tmp_path, monkeypatch):
+    from kindex import llm
+
+    client, _ = _fake_client({"directives": [], "summary": "s"})  # no "claims": the answer is unusable
+    monkeypatch.setattr(llm, "get_client", lambda config, **kw: client)
+    conv.ingest_conversation(store, "c1", MESSAGES, "2024-03-10")
+    assert conv.backfill_digests(store, _cfg(tmp_path, claims=True)) == 0
+    assert store.get_meta("conversation_digests") in (None, "{}")
+
+
+def test_named_dialogue_keeps_its_facts(store, tmp_path, monkeypatch):
+    from kindex import llm
+
+    client, calls = _fake_client({"directives": [], "facts": [{"date": "", "subject": "Caroline",
+                                                              "text": "Caroline went to a support group."}]})
+    monkeypatch.setattr(llm, "get_client", lambda config, **kw: client)
+    conv.ingest_conversation(store, "s1", [{"role": "Caroline", "content": "I went to a support group."},
+                                           {"role": "Melanie", "content": "That's great!"},
+                                           {"role": "Caroline", "content": "It was powerful."}], "2023-05-08")
+    assert conv.backfill_digests(store, _cfg(tmp_path, claims=True)) == 1
+    assert [c["json_schema"]["name"] for c in calls] == ["conversation_digest"]
+    facts = [n for n in store.all_nodes(node_type="document", limit=100)
+             if (n.get("extra") or {}).get("kind") == "conversation-fact"]
+    assert [f["content"] for f in facts] == ["Caroline went to a support group."]
+    assert not any(f["extra"].get("turn_claim") for f in facts)
+    assert conv.backfill_claims(store, _cfg(tmp_path, claims=True)) == 0 and len(calls) == 1
+
+
+def test_digest_claims_reads_each_conversations_claims_once(store, tmp_path, monkeypatch, capsys):
+    # `kin digest --claims` with conversations.claims on: the digest pass reads the
+    # claims, and the --claims pass must not read them a second time.
+    from argparse import Namespace
+
+    from kindex import cli, llm, vectors
+
+    client, calls = _fake_client(CLAIMS)
+    monkeypatch.setattr(llm, "get_client", lambda config, **kw: client)
+    monkeypatch.setattr(conv, "SUMMARY_MIN_TOKENS", 0)
+    monkeypatch.setattr(vectors, "drain_embedding_queue", lambda *a, **kw: None)
+    cfg = _cfg(tmp_path, claims=True)
+    monkeypatch.setattr(cli, "_store", lambda args: store)
+    monkeypatch.setattr(cli, "_ledger", lambda args: (None, cfg))
+    monkeypatch.setattr(store, "close", lambda: None)
+    conv.ingest_conversation(store, "c1", MESSAGES, "2024-03-10")
+
+    cli.cmd_digest(Namespace(claims=True))
+
+    assert [c["json_schema"]["name"] for c in calls].count("conversation_claims") == 1
+    assert "Gave 0 conversation(s) turn-level claims." in capsys.readouterr().out
+    assert conv.backfill_claims(store, cfg) == 0 and len(calls) == 2

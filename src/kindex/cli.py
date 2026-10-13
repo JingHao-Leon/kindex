@@ -4219,8 +4219,11 @@ def cmd_cron(args):
 # ── dream ─────────────────────────────────────────────────────────────
 
 def cmd_digest(args):
-    """Digest ingested conversations: standing directives and long-conversation summaries."""
-    from .conversations import backfill_digests
+    """Digest ingested conversations: standing directives and long-conversation summaries.
+    With --claims, conversations digested before `conversations.claims` was on are given
+    turn-level claims in place of their facts (without digesting them again); claims the
+    digest pass just read are not read a second time."""
+    from .conversations import backfill_claims, backfill_digests, build_profiles
     from .vectors import drain_embedding_queue
 
     store = _store(args)
@@ -4230,6 +4233,11 @@ def cmd_digest(args):
             print("No LLM configured; nothing to digest.", file=sys.stderr)
             return
         n = backfill_digests(store, cfg, ledger)
+        if getattr(args, "claims", False):
+            k = backfill_claims(store, cfg, ledger)
+            if k:
+                build_profiles(store, cfg, ledger)
+            print(f"Gave {k} conversation(s) turn-level claims.")
         drain_embedding_queue(store, cfg, max_jobs=10**9, time_budget=10**9, report_coverage=False)
         print(f"Digested {n} conversation(s).")
     finally:
@@ -8009,6 +8017,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # dream
     s = sub.add_parser("digest", help="Digest ingested conversations (directives, summaries)")
+    s.add_argument("--claims", action="store_true",
+                   help="Give already-digested conversations turn-level claims in place of their facts")
     _common(s)
     s.set_defaults(func=cmd_digest)
 

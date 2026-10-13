@@ -33,6 +33,7 @@ class _Reply:
 @pytest.fixture(autouse=True)
 def _fresh_limits(monkeypatch):
     monkeypatch.setattr(llm, "_EFFORT_LIMITS", {})
+    monkeypatch.setattr(llm, "_EFFORT_REJECTED", {})
 
 
 def _fake_api(monkeypatch, accepts):
@@ -97,3 +98,29 @@ def test_other_bad_requests_still_fail_without_echoing_the_body(monkeypatch):
 def test_a_supported_effort_is_sent_unchanged(monkeypatch):
     sent = _fake_api(monkeypatch, accepts={"medium", "high", "xhigh"})
     assert _ask("xhigh", model="gpt-6-luna") == "OK" and sent == ["xhigh"]
+
+
+def test_none_is_sent_when_asked_for(monkeypatch):
+    sent = _fake_api(monkeypatch, accepts={"none", "low", "medium", "high"})
+    assert _ask("none", model="gpt-5.6-luna") == "OK" and sent == ["none"]
+
+
+@pytest.mark.parametrize("low", ["minimal", "none"])
+def test_a_rejected_low_effort_leaves_higher_efforts_intact(monkeypatch, low):
+    # A model that rejects only the lowest efforts must still be sent the
+    # higher ones it takes: only the rejected level is remembered.
+    sent = _fake_api(monkeypatch, accepts={"low", "medium", "high"})
+    assert _ask(low, model="o4-mini") == "OK" and sent == [low, None]
+    sent.clear()
+    assert _ask("high", model="o4-mini") == "OK" and sent == ["high"]
+    sent.clear()
+    assert _ask(low, model="o4-mini") == "OK" and sent == [None]  # remembered: no second rejection
+
+
+def test_a_rejected_step_is_skipped_on_the_way_down(monkeypatch):
+    sent = _fake_api(monkeypatch, accepts={"medium", "high"})
+    assert _ask("low", model="o-mid") == "OK" and sent == ["low", "minimal", None]
+    sent.clear()
+    assert _ask("low", model="o-mid") == "OK" and sent == [None]
+    sent.clear()
+    assert _ask("medium", model="o-mid") == "OK" and sent == ["medium"]

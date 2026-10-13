@@ -1981,6 +1981,7 @@ class Store:
         referent: dict | None = None,
         asserted_at: str | None = None,
         true_of: str | None = None,
+        queue_embedding: bool = True,
     ) -> str:
         """Insert a node. Returns its ID.
 
@@ -2077,11 +2078,14 @@ class Store:
 
         # Queue for vector embedding — deferred to the daemon so a slow
         # embedding provider never stalls the add hot path (best-effort).
-        try:
-            from .vectors import enqueue_embedding
-            enqueue_embedding(self, nid)
-        except Exception:
-            pass  # vectors not installed — node still created
+        # A caller adding many nodes queues them together (queue_embedding=False,
+        # then vectors.enqueue_embeddings): one queue write instead of one per node.
+        if queue_embedding:
+            try:
+                from .vectors import enqueue_embedding
+                enqueue_embedding(self, nid)
+            except Exception:
+                pass  # vectors not installed — node still created
 
         return nid
 
