@@ -269,6 +269,28 @@ Or hand-edit `~/.cursor/mcp.json`:
 
 Cursor integration includes MCP, always-applied rules, and native supervisor hooks. The adapter has automated boundary coverage; authenticated Cursor model delivery and IDE activity discovery remain unverified. No Cursor account is needed to use Kindex with the other supported agents. See [supervision and independent health](docs/supervisor-health.md).
 
+### Remote agents (HTTPS behind Cloudflare Access)
+
+`kindex-remote` (extra `kindex[remote]`) serves your graph over streamable HTTP
+to agents on other machines. It listens on loopback only; a Cloudflare Tunnel
+publishes it and a Cloudflare Access application authenticates every caller:
+Managed OAuth for interactive agents (Claude Code, Codex, claude.ai connectors)
+and a service token for headless ones. The server also verifies the Access JWT
+(`Cf-Access-Jwt-Assertion`: signature, audience, issuer) on every request.
+
+```bash
+kindex-remote --access-team-domain <team>.cloudflareaccess.com \
+  --access-aud <application AUD tag> --public-host app.example.com --port 8767
+```
+
+Only graph tools are served (search, context, add/edit/learn/link, tasks, tags,
+coordination, watches, ask). Tools that run commands, read host paths or ingest
+from the host (reminders, ingest, modes, maintenance, Kinbase, `task_execute`)
+are not, `add` accepts only URL referents, and `show` does not resolve saved
+sources. Connect a client with `claude mcp add --transport http kindex
+https://app.example.com/mcp` (OAuth opens a browser once); a headless client
+sends `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers instead.
+
 ## Why Kindex
 
 ### Context-aware by design

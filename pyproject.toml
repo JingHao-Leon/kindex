@@ -31,6 +31,7 @@ kinbase = ["rfc8785>=0.1.4", "cryptography>=41"]
 llm = ["anthropic>=0.40"]
 vectors = ["sqlite-vec>=0.1"]
 mcp = ["mcp[cli]>=1.26.0,<2.0"]
+remote = ["mcp[cli]>=1.26.0,<2.0", "pyjwt[crypto]>=2.8"]
 reminders = ["dateparser>=1.1", "cronsim>=2.0"]
 transmogrifier = ["transmogrifier>=0.2.0"]
 # LLM-free deterministic extraction (coreference -> predicate routing ->
@@ -55,6 +56,7 @@ Issues = "https://github.com/wandercom/kindex/issues"
 kin = "kindex.cli:main"
 kin-mcp = "kindex.mcp_server:main"
 kindex-lite = "kindex.mcp_lite:main"
+kindex-remote = "kindex.mcp_remote:main"
 
 [project.entry-points."kindex.adapters"]
 github = "kindex.adapters.github:adapter"

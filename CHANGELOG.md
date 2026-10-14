@@ -4,6 +4,13 @@ All notable changes to Kindex are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+### Added
+- `kindex-remote` serves the graph to agents on other machines over streamable
+  HTTP behind Cloudflare Access (extra `kindex[remote]`). It binds loopback
+  only, verifies the Access JWT on every request, refuses a foreign Host
+  header, and serves an allowlist of graph tools; nothing that runs a
+  command, reads a host path or ingests from the host is reachable.
+
 ## [0.49.0] - 2026-10-14
 
 ### Added
