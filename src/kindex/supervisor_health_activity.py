@@ -13,6 +13,7 @@ import re
 import sqlite3
 
 MAX_FILES = 64
+SUBAGENTS_PER_SESSION = 16
 MAX_DIRS = 512
 WINDOW = 65536
 RECENT = 1200
@@ -96,14 +97,32 @@ def _codex_index(root, now):
     return candidates
 
 
+def _eligible(paths, now):
+    eligible = []
+    for path in dict.fromkeys(paths):
+        try:
+            stat = path.stat()
+            if path.is_file() and not path.is_symlink() and now - RECENT <= stat.st_mtime <= now + 60:
+                eligible.append((stat.st_mtime, path))
+        except OSError:
+            continue
+    return eligible
+
+
+def _subagent_file(path):
+    return path.parent.name == "subagents" and path.name.startswith("agent-")
+
+
 def _files(agent, now):
     home = Path.home()
     if agent == "claude":
         root = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(home / ".claude"))) / "projects"
         candidates = []
         for directory in _recent_dirs(root):
-            # Top-level sessions; Claude's subagents are not separate hook sessions.
-            _extend_candidates(candidates, directory.glob("*.jsonl"))
+            # Top-level sessions; Claude's subagents are not separate hook sessions,
+            # and a flat agent-*.jsonl (older layout) is a subagent, not a session.
+            _extend_candidates(candidates, (p for p in directory.glob("*.jsonl")
+                                            if not p.name.startswith("agent-")))
     elif agent == "codex":
         root = Path(os.environ.get("CODEX_HOME", str(home / ".codex"))) / "sessions"
         day = datetime.fromtimestamp(now, timezone.utc)
@@ -115,17 +134,23 @@ def _files(agent, now):
     else:
         root = home / ".gemini" / "antigravity-cli" / "brain"
         candidates = [p / ".system_generated/logs/transcript_full.jsonl" for p in _recent_dirs(root)]
-    eligible = []
-    for path in dict.fromkeys(candidates[:10000]):
-        try:
-            stat = path.stat()
-            if path.is_file() and not path.is_symlink() and now - RECENT <= stat.st_mtime <= now + 60:
-                eligible.append((stat.st_mtime, path))
-        except OSError:
-            continue
+    eligible = _eligible(candidates[:10000], now)
     if len(eligible) > MAX_FILES:
         raise ObservationIncomplete("Native recent transcript limit reached")
-    return root, [p for _, p in sorted(eligible, reverse=True)]
+    if agent == "claude":
+        # A recent session's subagents (<session>/subagents/agent-*.jsonl) only add use
+        # evidence for it, so they have their own bound: the newest few per session and
+        # MAX_FILES in all. Older ones are skipped; they never make the host unobservable.
+        nested = []
+        for _, path in eligible:
+            folder = path.with_suffix("") / "subagents"
+            if not folder.parent.is_symlink() and not folder.is_symlink():
+                found = []
+                _extend_candidates(found, folder.glob("agent-*.jsonl"))
+                nested += sorted(_eligible(found, now), reverse=True)[:SUBAGENTS_PER_SESSION]
+        eligible += sorted(nested, reverse=True)[:MAX_FILES]
+    # Parents first, so a subagent finds its parent's scope already resolved.
+    return root, [p for _, p in sorted(eligible, key=lambda e: (_subagent_file(e[1]), -e[0]))]
 
 
 def _ag_projects():
@@ -231,8 +256,44 @@ def _call_uses(call):
     return _cli_uses(command) if isinstance(command, str) else []
 
 
+def _subagent(path, now, scope):
+    """Record a Claude subagent's Kindex use as its parent's; never its activity.
+
+    Delegated work is not the parent's own turn, so it neither makes the parent
+    active nor starts a scope. Identity comes from the parent transcript (a
+    worktree subagent's cwd is not the parent project); a row naming another
+    session than its parent directory is refused, not reattributed.
+    """
+    from .supervisor_health import _time, record
+    if scope is None:
+        return None
+    for row in _rows(path):
+        if row.get("type") != "assistant" or row.get("isSidechain") is not True \
+                or row.get("sessionId") != scope["session_id"] or row.get("timestamp") is None:
+            continue
+        try:
+            at = _time(row["timestamp"])
+        except (TypeError, ValueError, OverflowError):
+            continue
+        content = row["message"].get("content") if isinstance(row.get("message"), dict) else None
+        if not (now - RECENT <= at <= now + 60) or not isinstance(content, list):
+            continue
+        key = "native-subagent:" + path.stem + ":" + str(row.get("uuid") or row["timestamp"])
+        for call in content:
+            if not isinstance(call, dict) or call.get("type") != "tool_use":
+                continue
+            for position, name in enumerate(_call_uses(call)):
+                ident = str(call.get("id") or name)
+                record(scope, "use", {"at": at, "tool": name, "outcome": "observed", "source": "native",
+                                      "initiator": "agent",
+                                      "event_id": key + ":" + ident + (":" + str(position) if position else "")})
+    return None
+
+
 def _jsonl(agent, path, now, projects):
     from .supervisor_health import _time, is_reviewer_session, record
+    if agent == "claude" and _subagent_file(path):
+        return _subagent(path, now, projects.get(path.parents[1]))
     head, tail = list(_rows(path, head=True)), list(_rows(path))
     project = sid = None
     for row in head:
@@ -261,6 +322,9 @@ def _jsonl(agent, path, now, projects):
         return None
     scoped = isinstance(project, str) and Path(project).is_absolute() and bool(sid)
     scope = {"project_path": project, "agent": agent, "session_id": sid}
+    if agent == "claude" and scoped and path.stem == sid:
+        # The subagent directory is named for the session; only then may it borrow this scope.
+        projects[path.with_suffix("")] = scope
     observed = False
     for index, row in enumerate(tail):
         raw_time = row.get("timestamp") or row.get("created_at")
@@ -410,12 +474,14 @@ def _cursor(now):
 
 
 def observe_activity(now):
-    """Observe at most 64 recent sessions per host, 64 KiB at each file edge."""
+    """Observe at most 64 recent sessions per host (and up to 64 of their subagent
+    transcripts for Claude), 64 KiB at each file edge."""
     result = {}
     for agent in ("claude", "codex", "antigravity"):
         count = unidentified = errors = 0
         try:
             root, files = _files(agent, now)
+            # AGY: session -> project. Claude: session directory -> parent scope, filled as parents scan.
             projects = _ag_projects() if agent == "antigravity" else {}
             for path in files:
                 try:

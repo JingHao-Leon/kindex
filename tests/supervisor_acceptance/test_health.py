@@ -288,6 +288,132 @@ def test_native_cli_and_plugin_use_count_as_agent_use(b, call, counts):
     assert "E2b result" not in json.dumps(result)
 
 
+def _claude_subagent(b, rows, name="agent-a1"):
+    # Claude Code layout: <projects>/<dir>/<parent>.jsonl and <dir>/<parent>/subagents/agent-<id>.jsonl.
+    folder = b.home / ".claude/projects" / str(b.project).replace("/", "-")
+    parent = folder / "independent-session.jsonl"
+    if not parent.exists():
+        parent.parent.mkdir(parents=True, exist_ok=True)
+        parent.write_text(json.dumps({"type": "user", "uuid": "parent-old", "sessionId": b.scope["session_id"],
+                                      "cwd": str(b.project), "timestamp": b.iso(-5000),
+                                      "message": {"role": "user", "content": "SYNTHETIC_PRIVATE_TRANSCRIPT_47"}}) + "\n")
+    path = folder / "independent-session" / "subagents" / (name + ".jsonl")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # A worktree-isolated subagent reports its worktree as cwd, not the parent's project.
+    path.write_text("".join(json.dumps({"isSidechain": True, "agentId": name[6:], "cwd": str(b.root / "worktree"),
+                                        **row}) + "\n" for row in rows))
+    (path.parent / (name + ".meta.json")).write_text(json.dumps({"agentType": "general-purpose"}))
+    return path
+
+
+def _assistant_call(b, uuid, offset, call, session_id="independent-session"):
+    return {"type": "assistant", "uuid": uuid, "sessionId": session_id, "timestamp": b.iso(offset),
+            "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_" + uuid, **call}]}}
+
+
+@pytest.mark.parametrize("call,sub_session,counts", [
+    ({"name": "mcp__kindex__search", "input": {"query": "E2b result"}}, "independent-session", True),
+    ({"name": "Bash", "input": {"command": "kin add 'E2b result'"}}, "independent-session", True),
+    ({"name": "Bash", "input": {"command": "ls -la"}}, "independent-session", False),
+    ({"name": "mcp__kindex__search", "input": {"query": "E2b result"}}, "other-session", False),
+])
+def test_subagent_kindex_use_counts_for_parent_session(b, call, sub_session, counts):
+    """H2 missing use. Mutation: scan top-level sessions only, or trust a subagent row's own session."""
+    b.record("activity", -2000, active=True, source="native")
+    b.record("hook", -1990)
+    folder = b.home / ".claude/projects" / str(b.project).replace("/", "-")
+    folder.mkdir(parents=True)
+    (folder / "independent-session.jsonl").write_text(json.dumps({"cwd": str(b.project), **_assistant_call(
+        b, "parent-1", -2, {"name": "Agent", "input": {"prompt": "SYNTHETIC_PRIVATE_TRANSCRIPT_47"}})}) + "\n")
+    _claude_subagent(b, [_assistant_call(b, "sub-1", -100, call, sub_session)])
+    b.check()
+    result = b.check()
+    assert bool(issues(result, "missing_use")) is not counts
+    parent = session(result)
+    assert parent["use_evidence"] == ("observed" if counts else "not_observed")
+    # Re-scans do not double count, and the subagent never gets a scope of its own.
+    assert parent["counts"]["use"] == (1 if counts else 0)
+    assert [row.get("scope", row)["session_id"] for row in summaries(result)] == ["independent-session"]
+    assert "E2b result" not in json.dumps(result)
+
+
+def test_subagent_work_is_not_parent_activity(b):
+    """H3 observed activity. Mutation: attribute subagent rows as parent activity."""
+    _claude_subagent(b, [
+        {"type": "user", "uuid": "sub-prompt", "sessionId": "independent-session", "timestamp": b.iso(-1100),
+         "message": {"role": "user", "content": "SYNTHETIC_PRIVATE_TRANSCRIPT_47"}},
+        _assistant_call(b, "sub-1", -600, {"name": "Bash", "input": {"command": "ls"}}),
+        _assistant_call(b, "sub-2", -2, {"name": "mcp__kindex__add", "input": {}}),
+    ])
+    result = b.check()
+    assert not issues(result, "missing_hooks") and not issues(result, "missing_use")
+    parent = session(result)
+    assert parent["active"] is False and parent["counts"]["activity"] == 0
+    assert parent["use_evidence"] == "observed"
+
+
+def test_subagent_files_have_their_own_bound(b):
+    """H3 bounded observation. Mutation: subagent files share the host-wide cap (one
+    busy session makes Claude unobservable) or the per-session cap reads them all."""
+    b.record("activity", -2000, active=True, source="native")
+    b.record("hook", -1990)
+    b.native_claude(age=30)
+    stamp = b.now.timestamp()
+    for n in range(40):
+        call = {"name": "mcp__kindex__search", "input": {}} if n in (0, 39) else {"name": "Bash", "input": {"command": "ls"}}
+        path = _claude_subagent(b, [_assistant_call(b, "sub-%d" % n, -10, call)], name="agent-a%d" % n)
+        os.utime(path, (stamp - 300 + n, stamp - 300 + n))  # agent-a39 newest, agent-a0 oldest
+    # Four more busy sessions: 16 + 4 * 14 subagent files is past the host-wide 64.
+    folder = b.home / ".claude/projects" / str(b.project).replace("/", "-")
+    for k in range(4):
+        sid = "busy-%d" % k
+        (folder / (sid + ".jsonl")).write_text(json.dumps({"cwd": str(b.project), **_assistant_call(
+            b, sid, -5000, {"name": "Agent", "input": {}}, sid)}) + "\n")
+        for n in range(14):
+            path = folder / sid / "subagents" / ("agent-b%d.jsonl" % n)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"isSidechain": True, **_assistant_call(
+                b, "%s-%d" % (sid, n), -10, {"name": "Bash", "input": {"command": "ls"}}, sid)}) + "\n")
+            os.utime(path, (stamp - 900, stamp - 900))
+    result = b.check()
+    assert not issues(result, "observation_unavailable")
+    # Only the newest subagent's Kindex call is read; agent-a0 is past the per-session bound.
+    assert session(result)["counts"]["use"] == 1
+
+
+def _register_reviewer(b):
+    payload = {"agent": "claude", "session_id": b.scope["session_id"], "project_path": b.scope["project_path"]}
+    result = subprocess.run(
+        [sys.executable, "-c", "import json,sys; from kindex.supervisor_health import register_reviewer_session as r; "
+                               "p=json.load(sys.stdin); r(p['agent'], p['session_id'], p['project_path'])"],
+        input=json.dumps(payload), text=True, capture_output=True, env=b.env)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("variant", ["renamed_parent", "no_sidechain_flag", "reviewer_parent"])
+def test_subagent_use_needs_a_matching_parent(b, variant):
+    """H1 scoped evidence. Mutation: drop the parent file-name check, the sidechain flag,
+    or the reviewer exclusion, and a subagent's use is credited anyway."""
+    b.record("activity", -2000, active=True, source="native")
+    b.record("hook", -1990)
+    folder = b.home / ".claude/projects" / str(b.project).replace("/", "-")
+    folder.mkdir(parents=True)
+    stem = "renamed" if variant == "renamed_parent" else "independent-session"
+    (folder / (stem + ".jsonl")).write_text(json.dumps({"cwd": str(b.project), **_assistant_call(
+        b, "parent-1", -2, {"name": "Agent", "input": {}})}) + "\n")
+    if variant == "reviewer_parent":
+        _register_reviewer(b)
+    path = folder / stem / "subagents" / "agent-a1.jsonl"
+    path.parent.mkdir(parents=True)
+    row = _assistant_call(b, "sub-1", -100, {"name": "mcp__kindex__search", "input": {}})
+    row["isSidechain"] = variant != "no_sidechain_flag"
+    path.write_text(json.dumps(row) + "\n")
+    result = b.check()
+    uses = [r["counts"]["use"] for r in summaries(result)
+            if r.get("scope", r)["session_id"] == "independent-session"]
+    assert sum(uses) == 0
+
+
 def test_queued_review_grace_then_delivery_resolves(b):
     """H2 prolonged queues/H4 grace. Mutation: queue never ages or delivery ignored."""
     b.seed_active()

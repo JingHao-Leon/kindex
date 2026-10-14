@@ -174,9 +174,13 @@ review failures. Stale or superseded reviews get terminal discard receipts; thes
 settle only the matching review and do not claim delivery or usefulness. A quiet completed review is valid silence.
 
 MCP calls without an explicit host/session identity remain unattributed. Native
-tool-call records can supply attribution; arbitrary code-wrapper text is not
-interpreted as proof that its embedded calls executed. Missing evidence means
-unverified, not proof that an agent deliberately ignored Kindex.
+tool-call records can supply attribution. A Claude subagent's Kindex calls count
+as its parent session's use; its other work is not parent activity. The newest
+16 subagent transcripts of each recent session are read, 64 in all; older ones
+are skipped rather than making Claude observation unavailable. Arbitrary
+code-wrapper text is not interpreted as proof that its embedded calls executed.
+Missing evidence means unverified, not proof that an agent deliberately ignored
+Kindex.
 
 Cursor CLI activity is observed through its native session metadata, including
 resumed sessions. Cursor IDE discovery and timestamped native tool-use discovery
