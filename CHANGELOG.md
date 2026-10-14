@@ -4,6 +4,8 @@ All notable changes to Kindex are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-10-14
+
 ### Added
 - `code_ingest.exclude` in `.kin/config` lists fnmatch globs that `kin ingest
   code` leaves out, on top of the built-in and Unity excludes rather than in
