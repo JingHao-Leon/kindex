@@ -44,6 +44,15 @@ All notable changes to Kindex are documented here. Format follows [Keep a Change
 - Reasoning effort `none` is accepted by `ask.effort`, `plan_effort` and
   `hard_effort`.
 
+### Changed
+- Supervisor health counts Kindex use by a Claude session's subagents as use by
+  the session, so a session that delegates its Kindex work is no longer
+  reported `missing_use`. A recent session's `subagents/agent-*.jsonl` files
+  are scanned for Kindex calls only: their work does not make the session look
+  active, they never form a session of their own, a row naming a different
+  session than its directory is ignored, and they count toward the 64-file
+  native scan limit.
+
 ### Fixed
 - Under a bound root, `kin config set --global` and `kin profile create` no
   longer write the real `$HOME/kin.yaml` when the root's config directory
