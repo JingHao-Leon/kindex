@@ -224,6 +224,28 @@ def test_native_session_without_any_hook_is_discovered_independently(b):
     assert "SYNTHETIC_PRIVATE_TRANSCRIPT_47" not in json.dumps(result)
 
 
+@pytest.mark.parametrize("tail_session,scoped", [("independent-session", True), ("other-session", False)])
+def test_oversized_first_prompt_still_scopes_native_claude_session(b, tail_session, scoped):
+    """H3 observation. Mutation: scope Claude only from the 64 KiB head window."""
+    path = b.home / ".claude/projects" / str(b.project).replace("/", "-") / "independent-session.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    meta = [{"type": kind, "sessionId": b.scope["session_id"]}
+            for kind in ("custom-title", "agent-name", "mode", "permission-mode")]
+    pasted = {"type": "user", "uuid": "native-paste", "sessionId": b.scope["session_id"],
+              "cwd": str(b.project), "timestamp": b.iso(-500),
+              "message": {"role": "user", "content": "x" * 200_000}}
+    latest = {"type": "assistant", "uuid": "native-reply", "sessionId": tail_session,
+              "cwd": str(b.project), "timestamp": b.iso(-400),
+              "message": {"role": "assistant", "content": "SYNTHETIC_PRIVATE_TRANSCRIPT_47"}}
+    path.write_text("".join(json.dumps(row) + "\n" for row in (*meta, pasted, latest)))
+    result = b.check()
+    assert bool(issues(result, "observation_unavailable")) is not scoped
+    assert bool(issues(result, "missing_hooks")) is scoped
+    if scoped:
+        assert issues(result, "missing_hooks")[0]["scope"] == b.scope
+    assert "SYNTHETIC_PRIVATE_TRANSCRIPT_47" not in json.dumps(result)
+
+
 def test_native_hook_grace_suppresses_early_allegation(b):
     """H3/H4 hook grace. Mutation: native activity immediately alarms."""
     b.native_claude(age=30)
