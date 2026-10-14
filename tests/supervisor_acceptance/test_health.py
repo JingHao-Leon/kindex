@@ -352,14 +352,66 @@ def test_subagent_work_is_not_parent_activity(b):
     assert parent["use_evidence"] == "observed"
 
 
-def test_subagent_files_count_toward_native_file_bound(b):
-    """H3 bounded observation. Mutation: subagent files bypass the recent-file cap."""
+def test_subagent_files_have_their_own_bound(b):
+    """H3 bounded observation. Mutation: subagent files share the host-wide cap (one
+    busy session makes Claude unobservable) or the per-session cap reads them all."""
+    b.record("activity", -2000, active=True, source="native")
+    b.record("hook", -1990)
     b.native_claude(age=30)
-    for n in range(64):
-        _claude_subagent(b, [_assistant_call(b, "sub-%d" % n, -10, {"name": "Bash", "input": {"command": "ls"}})],
-                         name="agent-a%d" % n)
-    found = issues(b.check(), "observation_unavailable")
-    assert found and found[0]["evidence"]["reason"] == "scan_limit"
+    stamp = b.now.timestamp()
+    for n in range(40):
+        call = {"name": "mcp__kindex__search", "input": {}} if n in (0, 39) else {"name": "Bash", "input": {"command": "ls"}}
+        path = _claude_subagent(b, [_assistant_call(b, "sub-%d" % n, -10, call)], name="agent-a%d" % n)
+        os.utime(path, (stamp - 300 + n, stamp - 300 + n))  # agent-a39 newest, agent-a0 oldest
+    # Four more busy sessions: 16 + 4 * 14 subagent files is past the host-wide 64.
+    folder = b.home / ".claude/projects" / str(b.project).replace("/", "-")
+    for k in range(4):
+        sid = "busy-%d" % k
+        (folder / (sid + ".jsonl")).write_text(json.dumps({"cwd": str(b.project), **_assistant_call(
+            b, sid, -5000, {"name": "Agent", "input": {}}, sid)}) + "\n")
+        for n in range(14):
+            path = folder / sid / "subagents" / ("agent-b%d.jsonl" % n)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"isSidechain": True, **_assistant_call(
+                b, "%s-%d" % (sid, n), -10, {"name": "Bash", "input": {"command": "ls"}}, sid)}) + "\n")
+            os.utime(path, (stamp - 900, stamp - 900))
+    result = b.check()
+    assert not issues(result, "observation_unavailable")
+    # Only the newest subagent's Kindex call is read; agent-a0 is past the per-session bound.
+    assert session(result)["counts"]["use"] == 1
+
+
+def _register_reviewer(b):
+    payload = {"agent": "claude", "session_id": b.scope["session_id"], "project_path": b.scope["project_path"]}
+    result = subprocess.run(
+        [sys.executable, "-c", "import json,sys; from kindex.supervisor_health import register_reviewer_session as r; "
+                               "p=json.load(sys.stdin); r(p['agent'], p['session_id'], p['project_path'])"],
+        input=json.dumps(payload), text=True, capture_output=True, env=b.env)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("variant", ["renamed_parent", "no_sidechain_flag", "reviewer_parent"])
+def test_subagent_use_needs_a_matching_parent(b, variant):
+    """H1 scoped evidence. Mutation: drop the parent file-name check, the sidechain flag,
+    or the reviewer exclusion, and a subagent's use is credited anyway."""
+    b.record("activity", -2000, active=True, source="native")
+    b.record("hook", -1990)
+    folder = b.home / ".claude/projects" / str(b.project).replace("/", "-")
+    folder.mkdir(parents=True)
+    stem = "renamed" if variant == "renamed_parent" else "independent-session"
+    (folder / (stem + ".jsonl")).write_text(json.dumps({"cwd": str(b.project), **_assistant_call(
+        b, "parent-1", -2, {"name": "Agent", "input": {}})}) + "\n")
+    if variant == "reviewer_parent":
+        _register_reviewer(b)
+    path = folder / stem / "subagents" / "agent-a1.jsonl"
+    path.parent.mkdir(parents=True)
+    row = _assistant_call(b, "sub-1", -100, {"name": "mcp__kindex__search", "input": {}})
+    row["isSidechain"] = variant != "no_sidechain_flag"
+    path.write_text(json.dumps(row) + "\n")
+    result = b.check()
+    uses = [r["counts"]["use"] for r in summaries(result)
+            if r.get("scope", r)["session_id"] == "independent-session"]
+    assert sum(uses) == 0
 
 
 def test_queued_review_grace_then_delivery_resolves(b):

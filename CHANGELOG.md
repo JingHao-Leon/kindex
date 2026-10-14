@@ -50,8 +50,10 @@ All notable changes to Kindex are documented here. Format follows [Keep a Change
   reported `missing_use`. A recent session's `subagents/agent-*.jsonl` files
   are scanned for Kindex calls only: their work does not make the session look
   active, they never form a session of their own, a row naming a different
-  session than its directory is ignored, and they count toward the 64-file
-  native scan limit.
+  session than its directory is ignored. The newest 16 per session (64 in all)
+  are read; older ones are skipped, never a reason to report Claude
+  observation unavailable. A flat `agent-*.jsonl` beside the sessions is no
+  longer read as a session.
 
 ### Fixed
 - Under a bound root, `kin config set --global` and `kin profile create` no

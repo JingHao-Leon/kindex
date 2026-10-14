@@ -13,6 +13,7 @@ import re
 import sqlite3
 
 MAX_FILES = 64
+SUBAGENTS_PER_SESSION = 16
 MAX_DIRS = 512
 WINDOW = 65536
 RECENT = 1200
@@ -118,8 +119,10 @@ def _files(agent, now):
         root = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(home / ".claude"))) / "projects"
         candidates = []
         for directory in _recent_dirs(root):
-            # Top-level sessions; Claude's subagents are not separate hook sessions.
-            _extend_candidates(candidates, directory.glob("*.jsonl"))
+            # Top-level sessions; Claude's subagents are not separate hook sessions,
+            # and a flat agent-*.jsonl (older layout) is a subagent, not a session.
+            _extend_candidates(candidates, (p for p in directory.glob("*.jsonl")
+                                            if not p.name.startswith("agent-")))
     elif agent == "codex":
         root = Path(os.environ.get("CODEX_HOME", str(home / ".codex"))) / "sessions"
         day = datetime.fromtimestamp(now, timezone.utc)
@@ -132,16 +135,20 @@ def _files(agent, now):
         root = home / ".gemini" / "antigravity-cli" / "brain"
         candidates = [p / ".system_generated/logs/transcript_full.jsonl" for p in _recent_dirs(root)]
     eligible = _eligible(candidates[:10000], now)
-    if agent == "claude" and len(eligible) <= MAX_FILES:
-        # A recent session's subagents (<session>/subagents/agent-*.jsonl) share the file bound.
+    if len(eligible) > MAX_FILES:
+        raise ObservationIncomplete("Native recent transcript limit reached")
+    if agent == "claude":
+        # A recent session's subagents (<session>/subagents/agent-*.jsonl) only add use
+        # evidence for it, so they have their own bound: the newest few per session and
+        # MAX_FILES in all. Older ones are skipped; they never make the host unobservable.
         nested = []
         for _, path in eligible:
             folder = path.with_suffix("") / "subagents"
             if not folder.parent.is_symlink() and not folder.is_symlink():
-                _extend_candidates(nested, folder.glob("agent-*.jsonl"))
-        eligible += _eligible(nested, now)
-    if len(eligible) > MAX_FILES:
-        raise ObservationIncomplete("Native recent transcript limit reached")
+                found = []
+                _extend_candidates(found, folder.glob("agent-*.jsonl"))
+                nested += sorted(_eligible(found, now), reverse=True)[:SUBAGENTS_PER_SESSION]
+        eligible += sorted(nested, reverse=True)[:MAX_FILES]
     # Parents first, so a subagent finds its parent's scope already resolved.
     return root, [p for _, p in sorted(eligible, key=lambda e: (_subagent_file(e[1]), -e[0]))]
 
@@ -467,7 +474,8 @@ def _cursor(now):
 
 
 def observe_activity(now):
-    """Observe at most 64 recent sessions per host, 64 KiB at each file edge."""
+    """Observe at most 64 recent sessions per host (and up to 64 of their subagent
+    transcripts for Claude), 64 KiB at each file edge."""
     result = {}
     for agent in ("claude", "codex", "antigravity"):
         count = unidentified = errors = 0
