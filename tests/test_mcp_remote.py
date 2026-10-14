@@ -117,15 +117,71 @@ def test_add_refuses_file_referents_but_keeps_url_referents(monkeypatch):
 
 
 def test_show_never_resolves_host_sources():
+    import inspect
+
     seen = []
     guarded = mcp_remote._guard("show", lambda node_id, resolve_sources=False: seen.append(resolve_sources))
-    guarded("n1", resolve_sources=True)
+    assert list(inspect.signature(guarded).parameters) == ["node_id"]
+    assert "resolve_sources" not in guarded.__doc__
+    guarded("n1")
     assert seen == [False]
 
 
-def test_cli_refuses_a_non_loopback_listener(monkeypatch):
+@pytest.mark.parametrize("name", ["task_add", "task_list"])
+def test_task_tools_refuse_host_project_paths(name):
+    calls = []
+
+    def handler(text="", project_path="", limit=20):
+        calls.append(project_path)
+        return "ok"
+
+    guarded = mcp_remote._guard(name, handler)
+    assert guarded("x", project_path="/proc/self/cwd").startswith("Error:")
+    assert guarded("x") == "ok"
+    assert calls == [""]
+
+
+def test_tool_handlers_run_off_the_event_loop():
+    import asyncio
+    import threading
+
+    def handler(value: int) -> str:
+        return f"{value}:{threading.current_thread().name}"
+
+    wrapped = mcp_remote._off_loop(handler)
+    result = asyncio.run(wrapped(value=3))
+    assert result.startswith("3:kindex-remote")
+
+
+def test_served_tool_schemas_keep_handler_parameters(keys):
+    with _client(keys) as client:
+        listed = _rpc(client, _token(keys), "tools/list")
+    tools = {tool["name"]: tool for tool in listed.json()["result"]["tools"]}
+    assert "query" in tools["search"]["inputSchema"]["properties"]
+    assert set(tools["show"]["inputSchema"]["properties"]) == {"node_id"}
+
+
+def test_websockets_are_refused_before_the_app():
+    import asyncio
+
+    reached, sent = [], []
+
+    async def app(scope, receive, send):
+        reached.append(scope["type"])
+
+    async def send(message):
+        sent.append(message)
+
+    guard = mcp_remote.AccessMiddleware(app, verifier=None)
+    asyncio.run(guard({"type": "websocket", "headers": []}, None, send))
+    assert reached == []
+    assert sent == [{"type": "websocket.close", "code": 1008}]
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "localhost"])
+def test_cli_refuses_a_non_loopback_listener(monkeypatch, host):
     monkeypatch.setattr("sys.argv", ["kindex-remote", "--access-team-domain", TEAM,
-                                     "--access-aud", AUD, "--public-host", HOST, "--host", "0.0.0.0"])
+                                     "--access-aud", AUD, "--public-host", HOST, "--host", host])
     with pytest.raises(SystemExit) as exc:
         mcp_remote.main()
     assert exc.value.code == 2

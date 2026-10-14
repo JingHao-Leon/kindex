@@ -11,12 +11,15 @@ nothing that runs a command, reads a host path or ingests from the machine.
 from __future__ import annotations
 
 import argparse
+import asyncio
+import contextvars
 import functools
 import inspect
 import ipaddress
 import json
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 from . import mcp_lite, mcp_server
 
@@ -50,15 +53,20 @@ class AccessVerifier:
 
 
 class AccessMiddleware:
-    """ASGI guard: no valid Access JWT, no MCP. Lifespan events pass through."""
+    """ASGI guard: no valid Access JWT, no MCP. Only lifespan events pass unchecked."""
 
     def __init__(self, app, verifier: AccessVerifier):
         self.app = app
         self.verifier = verifier
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
+        if scope["type"] == "lifespan":
             return await self.app(scope, receive, send)
+        if scope["type"] != "http":
+            # Nothing but HTTP is served; refuse websockets before they reach a route.
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 1008})
+            return None
         import anyio
         import jwt
 
@@ -84,8 +92,31 @@ async def _deny(send, status: int, message: str) -> None:
     await send({"type": "http.response.body", "body": body})
 
 
+# One worker: tool handlers share a single SQLite connection, which must stay on
+# the thread that opened it, and serial calls keep writes ordered. The event
+# loop stays free, so Access checks and other requests are never stalled by a
+# slow LLM call or a busy database.
+_WORKER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kindex-remote")
+
+
+def _off_loop(handler):
+    @functools.wraps(handler)
+    async def run(*args, **kwargs):
+        call = functools.partial(contextvars.copy_context().run, handler, *args, **kwargs)
+        return await asyncio.get_running_loop().run_in_executor(_WORKER, call)
+    return run
+
+
 def _guard(name: str, handler):
     """Remote limits on the few allowlisted tools that can touch host paths."""
+    if name in ("task_add", "task_list"):
+        @functools.wraps(handler)
+        def tasks(*args, **kwargs):
+            values = inspect.signature(handler).bind(*args, **kwargs).arguments
+            if values.get("project_path"):
+                return "Error: remote task tools do not accept project_path; it names this host's paths"
+            return handler(*args, **kwargs)
+        return tasks
     if name == "add":
         @functools.wraps(handler)
         def add(*args, **kwargs):
@@ -97,9 +128,16 @@ def _guard(name: str, handler):
             return handler(*args, **kwargs)
         return add
     if name == "show":
-        @functools.wraps(handler)
-        def show(node_id: str, resolve_sources: bool = False) -> str:
-            # Resolving saved sources opens other databases on this host.
+        # Not wrapped: the remote schema has no resolve_sources, because
+        # resolving saved sources opens other databases on this host.
+        def show(node_id: str) -> str:
+            """Show full details of a node including edges and provenance.
+
+            Saved source references are listed but not resolved remotely.
+
+            Args:
+                node_id: Node ID or title to look up.
+            """
             return handler(node_id, resolve_sources=False)
         return show
     return handler
@@ -124,7 +162,7 @@ def create_server(*, public_host: str, port: int):
     )
     for name in REMOTE_TOOLS:
         # Keep the full server's guard (errors, redaction, health) on each tool.
-        server.add_tool(_guard(name, getattr(mcp_server, name)), name=name)
+        server.add_tool(_off_loop(_guard(name, getattr(mcp_server, name))), name=name)
     return server
 
 
@@ -144,8 +182,12 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8767)
     parser.add_argument("--profile", help="Kindex profile to serve (default: normal resolution)")
     args = parser.parse_args()
-    if not ipaddress.ip_address(args.host).is_loopback:
-        parser.error("--host must be a loopback address; publish through the tunnel")
+    try:
+        loopback = ipaddress.ip_address(args.host).is_loopback
+    except ValueError:
+        loopback = False
+    if not loopback:
+        parser.error("--host must be a loopback IP address; publish through the tunnel")
     if args.profile:
         os.environ["KIN_PROFILE"] = args.profile
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
