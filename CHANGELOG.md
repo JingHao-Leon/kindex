@@ -45,6 +45,18 @@ All notable changes to Kindex are documented here. Format follows [Keep a Change
   `hard_effort`.
 
 ### Fixed
+- Under a bound root, `kin config set --global` and `kin profile create` no
+  longer write the real `$HOME/kin.yaml` when the root's config directory
+  cannot be created (a `.config` that is a file, say); they write
+  `<root>/kin.yaml`. `kin profile create --config` resolves its path beneath
+  the bound root, as `kin config set --config` already did.
+- `kin setup-codex-hooks` says that Codex runs new or changed hooks only once
+  they are trusted, at its startup review prompt or in `/hooks`; until then
+  they do not run, SessionStart included.
+- Supervisor health no longer raises `observation_unavailable` for a healthy
+  Claude session whose first prompt (a pasted image, say) is larger than the
+  64 KiB the checker reads from the start of a transcript. It takes the
+  session's project and id from the latest rows instead, if they match.
 - A model that rejects a low reasoning effort (`minimal`, `none`) keeps the
   higher efforts it accepts. The rejection used to mark the model as taking no
   effort at all, so every later call on it, high-effort ones included, was

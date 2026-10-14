@@ -3510,40 +3510,19 @@ def _profile_create(args):
         print("Error: --data-dir is required for profile create", file=sys.stderr)
         sys.exit(2)
 
-    from .config import _effective_global_paths
+    from .config import _global_write_path, _resolve_path
 
     # An explicit --config is the write target (mirrors `kin config set`);
     # otherwise fall through to the global kin.yaml discovery.
     explicit = getattr(args, "config", None)
     if explicit:
-        path = Path(explicit).expanduser().resolve()
+        path = _resolve_path(explicit)
         path.parent.mkdir(parents=True, exist_ok=True)
     else:
-        path = None
-        for p in _effective_global_paths():
-            from .config import _contained_resolve
-            p = _contained_resolve(p)
-            if p is not None and p.is_file():
-                path = p
-                break
+        path = _global_write_path()
         if path is None:
-            path = _effective_global_paths()[0]
-            from .config import _contained_resolve, _bound_root as _br
-            contained = _contained_resolve(path)
-            if contained is None:
-                # Symlink escaped the root — don't write through it.
-                if _br is not None:
-                    path = _br / "kin.yaml"
-                else:
-                    path = Path.home() / "kin.yaml"
-            else:
-                path = contained
-            try:
-                path.parent.mkdir(parents=True, exist_ok=True)
-            except (FileNotFoundError, OSError):
-                # Dangling symlink or broken parent — fall back to
-                # a path that doesn't go through the symlink.
-                path = Path.home() / "kin.yaml"
+            print("Error: the global config path escapes the bound root", file=sys.stderr)
+            sys.exit(1)
 
     # Round-trip the existing yaml: load, modify, dump — unknown keys survive.
     data = (yaml.safe_load(path.read_text()) or {}) if path.exists() else {}
@@ -7160,33 +7139,11 @@ def _config_write(key: str, value: str, config_path: str | None = None,
         from .config import _resolve_path
         path = _resolve_path(config_path)
     elif global_:
-        from .config import _effective_global_paths, _contained_resolve
-        path = None
-        for p in _effective_global_paths():
-            p = _contained_resolve(p)
-            if p is not None and p.exists():
-                path = p
-                break
+        from .config import _global_write_path
+        path = _global_write_path()
         if path is None:
-            path = _effective_global_paths()[0]
-            contained = _contained_resolve(path)
-            if contained is None:
-                # Symlink escaped the root — don't write through it.
-                # Fall back to a path inside the root that doesn't go
-                # through the symlink.
-                from .config import _bound_root as _br
-                if _br is not None:
-                    path = _br / "kin.yaml"
-                else:
-                    path = Path.home() / "kin.yaml"
-            else:
-                path = contained
-            try:
-                path.parent.mkdir(parents=True, exist_ok=True)
-            except (FileNotFoundError, OSError):
-                # Dangling symlink or broken parent — fall back to
-                # a path that doesn't go through the symlink.
-                path = Path.home() / "kin.yaml"
+            print("Error: the global config path escapes the bound root", file=sys.stderr)
+            sys.exit(1)
     else:
         from .config import (
             _contained_resolve,

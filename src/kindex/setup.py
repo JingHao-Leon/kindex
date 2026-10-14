@@ -94,6 +94,13 @@ def install_claude_hooks(config: "Config", dry_run: bool = False, *,
     return install(config, mode=mode, dry_run=dry_run)
 
 
+# Codex runs a new or changed hook only after the user trusts it: the
+# interactive CLI offers a review at startup, and /hooks reviews at any time.
+# An untrusted hook does not run. Kindex cannot read the trust state.
+CODEX_TRUST_NOTICE = ("Codex runs new or changed hooks only after you trust them: "
+                      "review the Kindex hooks when Codex asks at startup, or open /hooks. "
+                      "Until then Codex does not run them.")
+
 # Every command line a Kindex Codex hook has been installed with. Ownership is
 # the exact command, never a word in it: a handler that merely mentions
 # "kindex" (or shares an entry with a Kindex handler) is someone else's.
@@ -234,11 +241,13 @@ def install_codex_hooks(config: "Config", dry_run: bool = False) -> list[str]:
         return actions
     if dry_run:
         actions.append(f"Would write {hooks_path}")
+        actions.append(CODEX_TRUST_NOTICE)
         return actions
     _write_codex_hooks(hooks_path, data)
     _codex_record_path(config).write_text(
         CodexHookRecord(commands=sorted(set(record.commands) | set(installed))).model_dump_json())
     actions.append(f"Wrote {hooks_path}")
+    actions.append(CODEX_TRUST_NOTICE)
     return actions
 
 

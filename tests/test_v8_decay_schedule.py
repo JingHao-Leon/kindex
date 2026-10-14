@@ -478,3 +478,32 @@ def test_i6_schema_v8_inventory_is_unchanged_by_decay(tmp_path):
         assert after == before
     finally:
         store.close()
+
+
+def test_r2_sub_second_folds_match_one_fold(tmp_path, monkeypatch):
+    """Decay timestamps keep sub-second precision, so many folds less than a
+    second apart compose to the same weight as one fold over the same span
+    (a seconds-precision stamp dropped each partial second and drifted with
+    run count). A short half-life makes the 3.09 s span move the weight."""
+    clock, _ = _clocked(monkeypatch)
+    start = dt.datetime(2026, 1, 1, 0, 0, 0, 250000, tzinfo=dt.timezone.utc)
+    half_life_days = 0.001  # 86.4 s
+
+    def run(name, steps):
+        clock.current = start
+        store = _store(tmp_path, name)
+        try:
+            store.add_node("Sub-second probe", node_id="probe", weight=1.0)
+            store.apply_weight_decay(node_half_life_days=half_life_days)
+            for seconds in steps:
+                clock.current = clock.current + dt.timedelta(seconds=seconds)
+                store.apply_weight_decay(node_half_life_days=half_life_days)
+            return _weight(store, "probe")
+        finally:
+            store.close()
+
+    closed = 0.5 ** (3.09 / 86.4)
+    one = run("one-fold", [3.09])
+    many = run("many-folds", [3.09 / 21] * 21)
+    assert math.isclose(one, closed, abs_tol=ABS_TOL)
+    assert math.isclose(many, closed, abs_tol=ABS_TOL), f"21 sub-second folds drifted: {many} vs {closed}"

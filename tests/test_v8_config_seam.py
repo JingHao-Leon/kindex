@@ -759,3 +759,134 @@ def test_r1_5_scheduler_installers_do_not_escape_environment(tmp_path, monkeypat
     after = {p.relative_to(tmp_path): p.stat().st_mtime_ns for p in tmp_path.rglob("*")}
     assert after == before, f"scheduler setup changed outside-bound paths: {after ^ before}"
     assert not calls, f"scheduler setup launched an uncontained subprocess: {calls}"
+
+
+def _outside_snapshot(tmp_path, root):
+    return {p.relative_to(tmp_path): p.stat().st_mtime_ns
+            for p in tmp_path.rglob("*") if not p.is_relative_to(root)}
+
+
+def test_r1_5_unusable_config_parent_falls_back_inside_root(tmp_path, monkeypatch):
+    """R1.5: a bound ``.config`` that is a regular file makes the global
+    config directory uncreatable. The writers used to fall back to the real
+    HOME's kin.yaml; they must fall back to the bound root's instead."""
+    import sys
+
+    import kindex.cli as cli_mod
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    root = tmp_path / "bound-blocked"
+    root.mkdir()
+    (root / ".config").write_text("not a directory")
+    before = _outside_snapshot(tmp_path, root)
+    bind_root, unbind_root, _, _ = _seam()
+    bind_root(root)
+    try:
+        monkeypatch.setattr(sys, "argv", ["kin", "config", "set", "llm.enabled", "false", "--global"])
+        cli_mod.main()
+        monkeypatch.setattr(sys, "argv", ["kin", "profile", "create", "blocked-parent",
+                                          "--data-dir", str(root / "profile-data")])
+        cli_mod.main()
+    finally:
+        unbind_root()
+    assert _outside_snapshot(tmp_path, root) == before, "bound config write escaped to HOME"
+    assert "blocked-parent" in (root / "kin.yaml").read_text()
+
+
+def test_r1_5_profile_create_explicit_config_is_anchored_in_root(tmp_path, monkeypatch):
+    """R1.5: ``kin profile create --config <outside path>`` resolves the path
+    beneath the bound root, as ``kin config set --config`` already does."""
+    import sys
+
+    import kindex.cli as cli_mod
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    root = tmp_path / "bound-explicit"
+    root.mkdir()
+    outside = tmp_path / "outside" / "kin.yaml"
+    before = _outside_snapshot(tmp_path, root)
+    bind_root, unbind_root, _, _ = _seam()
+    bind_root(root)
+    try:
+        monkeypatch.setattr(sys, "argv", ["kin", "profile", "create", "explicit-probe",
+                                          "--data-dir", str(root / "d"), "--config", str(outside)])
+        cli_mod.main()
+    finally:
+        unbind_root()
+    assert not outside.exists()
+    assert _outside_snapshot(tmp_path, root) == before, "explicit --config wrote outside the root"
+
+
+def test_r1_5_bound_identity_never_probes_git(tmp_path, monkeypatch):
+    """R1.5: under a binding, the current user is not read from a git
+    config outside the root (the real HOME's or an enclosing repo's)."""
+    outer = tmp_path / "outer"
+    outer.mkdir()
+    subprocess.run(["git", "init", "-q", str(outer)], check=True)
+    subprocess.run(["git", "-C", str(outer), "config", "user.name", "OUTSIDE-BINDING"], check=True)
+    root = outer / "bound"
+    root.mkdir()
+    calls = []
+    real_run = subprocess.run
+    def spy(*args, **kwargs):
+        calls.append(args[0] if args else kwargs.get("args"))
+        return real_run(*args, **kwargs)
+    monkeypatch.setattr(subprocess, "run", spy)
+    bind_root, unbind_root, _, _ = _seam()
+    bind_root(root)
+    try:
+        user = config_mod.load_config().current_user
+    finally:
+        unbind_root()
+    assert user.lower() != "outside-binding"
+    assert not [c for c in calls if c and c[0] == "git"], f"git probed under a binding: {calls}"
+
+
+def test_profile_create_succeeds_on_a_bare_home(tmp_path, monkeypatch):
+    """A fresh HOME with no ~/.config/kindex: ``kin profile create`` creates
+    the directory and the file and exits 0 (the cli_home fixture pre-creates
+    the directory, which hid a crash here)."""
+    import sys
+
+    import kindex.cli as cli_mod
+
+    home = tmp_path / "bare-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    target = home / ".config" / "kindex" / "kin.yaml"
+    monkeypatch.setattr(config_mod, "_GLOBAL_PATHS", [target])
+    monkeypatch.setattr(sys, "argv", ["kin", "profile", "create", "fresh",
+                                      "--data-dir", str(tmp_path / "fresh-data")])
+    try:
+        cli_mod.main()
+    except SystemExit as exc:
+        assert exc.code in (0, None), f"profile create exited {exc.code}"
+    assert "fresh" in target.read_text()
+
+
+def test_r1_5_symlinked_root_fallback_is_refused(tmp_path, monkeypatch):
+    """R1.5: when the bound config parent is unusable and ``<root>/kin.yaml``
+    is a symlink out of the root, the write is refused, not followed."""
+    import sys
+
+    import kindex.cli as cli_mod
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    root = tmp_path / "bound-linked"
+    root.mkdir()
+    (root / ".config").write_text("not a directory")
+    outside = tmp_path / "outside-kin.yaml"
+    outside.write_text("untouched: true\n")
+    (root / "kin.yaml").symlink_to(outside)
+    bind_root, unbind_root, _, _ = _seam()
+    bind_root(root)
+    try:
+        monkeypatch.setattr(sys, "argv", ["kin", "config", "set", "llm.enabled", "false", "--global"])
+        with pytest.raises(SystemExit) as exc:
+            cli_mod.main()
+    finally:
+        unbind_root()
+    assert exc.value.code == 1
+    assert outside.read_text() == "untouched: true\n"
