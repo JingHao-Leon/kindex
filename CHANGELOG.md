@@ -51,8 +51,8 @@ All notable changes to Kindex are documented here. Format follows [Keep a Change
   `<root>/kin.yaml`. `kin profile create --config` resolves its path beneath
   the bound root, as `kin config set --config` already did.
 - `kin setup-codex-hooks` says that Codex runs new or changed hooks only once
-  they are trusted in `/hooks`. Untrusted hooks, SessionStart included, are
-  skipped without a prompt.
+  they are trusted, at its startup review prompt or in `/hooks`; until then
+  they do not run, SessionStart included.
 - Supervisor health no longer raises `observation_unavailable` for a healthy
   Claude session whose first prompt (a pasted image, say) is larger than the
   64 KiB the checker reads from the start of a transcript. It takes the

@@ -218,20 +218,25 @@ def _contained_resolve(path: str | Path) -> Path | None:
     return resolved
 
 
-def _global_write_path() -> Path:
+def _global_write_path() -> Path | None:
     """The global kin.yaml a write goes to: the first contained candidate that
     exists, else the first candidate, made ready to write.
 
     Under a binding no returned path is outside the root (R1.5): an escaping
     symlink or an unusable parent falls back to ``<root>/kin.yaml``, never the
-    real HOME.
+    real HOME, and None means that fallback escapes too.
     """
     for candidate in _effective_global_paths():
         candidate = _contained_resolve(candidate)
         if candidate is not None and candidate.is_file():
             return candidate
-    fallback = (_bound_root if _bound_root is not None else Path.home()) / "kin.yaml"
+    if _bound_root is not None:
+        fallback = _contained_resolve(_bound_root / "kin.yaml")
+    else:
+        fallback = Path.home() / "kin.yaml"
     path = _contained_resolve(_effective_global_paths()[0]) or fallback
+    if path is None:
+        return None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
     except OSError:

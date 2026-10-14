@@ -840,7 +840,7 @@ def test_r1_5_bound_identity_never_probes_git(tmp_path, monkeypatch):
         user = config_mod.load_config().current_user
     finally:
         unbind_root()
-    assert user != "OUTSIDE-BINDING"
+    assert user.lower() != "outside-binding"
     assert not [c for c in calls if c and c[0] == "git"], f"git probed under a binding: {calls}"
 
 
@@ -864,3 +864,29 @@ def test_profile_create_succeeds_on_a_bare_home(tmp_path, monkeypatch):
     except SystemExit as exc:
         assert exc.code in (0, None), f"profile create exited {exc.code}"
     assert "fresh" in target.read_text()
+
+
+def test_r1_5_symlinked_root_fallback_is_refused(tmp_path, monkeypatch):
+    """R1.5: when the bound config parent is unusable and ``<root>/kin.yaml``
+    is a symlink out of the root, the write is refused, not followed."""
+    import sys
+
+    import kindex.cli as cli_mod
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    root = tmp_path / "bound-linked"
+    root.mkdir()
+    (root / ".config").write_text("not a directory")
+    outside = tmp_path / "outside-kin.yaml"
+    outside.write_text("untouched: true\n")
+    (root / "kin.yaml").symlink_to(outside)
+    bind_root, unbind_root, _, _ = _seam()
+    bind_root(root)
+    try:
+        monkeypatch.setattr(sys, "argv", ["kin", "config", "set", "llm.enabled", "false", "--global"])
+        with pytest.raises(SystemExit) as exc:
+            cli_mod.main()
+    finally:
+        unbind_root()
+    assert exc.value.code == 1
+    assert outside.read_text() == "untouched: true\n"

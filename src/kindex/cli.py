@@ -3520,6 +3520,9 @@ def _profile_create(args):
         path.parent.mkdir(parents=True, exist_ok=True)
     else:
         path = _global_write_path()
+        if path is None:
+            print("Error: the global config path escapes the bound root", file=sys.stderr)
+            sys.exit(1)
 
     # Round-trip the existing yaml: load, modify, dump — unknown keys survive.
     data = (yaml.safe_load(path.read_text()) or {}) if path.exists() else {}
@@ -7138,6 +7141,9 @@ def _config_write(key: str, value: str, config_path: str | None = None,
     elif global_:
         from .config import _global_write_path
         path = _global_write_path()
+        if path is None:
+            print("Error: the global config path escapes the bound root", file=sys.stderr)
+            sys.exit(1)
     else:
         from .config import (
             _contained_resolve,

@@ -94,12 +94,12 @@ def install_claude_hooks(config: "Config", dry_run: bool = False, *,
     return install(config, mode=mode, dry_run=dry_run)
 
 
-# Codex runs a new or changed hook only after the user trusts it in /hooks, and
-# skips an untrusted SessionStart hook before any model is running, so nothing
-# in a session will prompt for it. Kindex cannot read the trust state.
+# Codex runs a new or changed hook only after the user trusts it: the
+# interactive CLI offers a review at startup, and /hooks reviews at any time.
+# An untrusted hook does not run. Kindex cannot read the trust state.
 CODEX_TRUST_NOTICE = ("Codex runs new or changed hooks only after you trust them: "
-                      "start Codex and open /hooks to review and trust the Kindex hooks. "
-                      "Until then Codex skips them.")
+                      "review the Kindex hooks when Codex asks at startup, or open /hooks. "
+                      "Until then Codex does not run them.")
 
 # Every command line a Kindex Codex hook has been installed with. Ownership is
 # the exact command, never a word in it: a handler that merely mentions
