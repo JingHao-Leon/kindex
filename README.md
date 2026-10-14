@@ -179,7 +179,7 @@ kin setup-agents-md --install --global
 kin ingest codex-sessions   # optional: backfill saved Codex sessions
 ```
 
-`setup-codex-hooks` installs a **SessionStart** hook (alongside the prompt/tool attention hooks), so Codex begins each session with the same auto-primed context and "use kindex" / `.kin` directive as Claude Code.
+`setup-codex-hooks` installs a **SessionStart** hook (alongside the prompt/tool attention hooks), so Codex begins each session with the same auto-primed context and "use kindex" / `.kin` directive as Claude Code. Codex runs new or changed hooks only after you trust them in `/hooks`; until then it skips them, SessionStart included, without asking.
 
 Or hand-edit `~/.codex/config.toml`:
 ```toml

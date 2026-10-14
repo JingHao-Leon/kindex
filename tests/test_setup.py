@@ -313,6 +313,18 @@ class TestSetupCodex:
         assert len(data["hooks"]["PostToolUse"]) == 1
         assert len(data["hooks"]["SessionStart"]) == 1
 
+    def test_setup_codex_hooks_tells_the_user_to_trust_them(self, tmp_path):
+        """A write or a dry run names /hooks; an unchanged install says nothing
+        more, and the notice never promises Codex will ask on its own."""
+        from kindex.setup import CODEX_TRUST_NOTICE, install_codex_hooks
+
+        cfg = Config(data_dir=str(tmp_path), codex_dir=str(tmp_path / ".codex"))
+        assert CODEX_TRUST_NOTICE in install_codex_hooks(cfg, dry_run=True)
+        assert CODEX_TRUST_NOTICE in install_codex_hooks(cfg)
+        assert CODEX_TRUST_NOTICE not in install_codex_hooks(cfg)
+        assert "/hooks" in CODEX_TRUST_NOTICE
+        assert "will ask" not in CODEX_TRUST_NOTICE.lower()
+
     def test_uninstall_codex_hooks_preserves_other_hooks(self, tmp_path):
         """Uninstall should remove only Kindex prompt-check hooks."""
         from kindex.setup import install_codex_hooks, uninstall_codex_hooks

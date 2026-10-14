@@ -623,3 +623,32 @@ def test_r3_5_mcp_note_when_fenced_candidates_would_rank(fence_store,
     assert "results fenced" in out, (
         f"missing fence note in MCP result: {out!r}")
     assert "include_archived" in out, "the note must name the escape hatch"
+
+
+@pytest.fixture
+def multi_fence_store(tmp_path):
+    """Several live survivors with distinct relevance, interleaved with
+    archived and superseded matches, so R3.4 ordering is non-vacuous."""
+    s = Store(Config(data_dir=str(tmp_path / "multi")))
+    for n in range(1, 5):
+        s.add_node(f"Live {n}", content="ordertoken " * n + "live", node_id=f"live{n}", weight=1.0)
+        s.add_node(f"Archived {n}", content="ordertoken " * (n + 1) + "archived",
+                   node_id=f"arch{n}", weight=1.0)
+        s.update_node(f"arch{n}", status="archived")
+    old_id = s.add_node("Superseded", content="ordertoken " * 3 + "superseded", node_id="sup1", weight=1.0)
+    s.supersede_node(old_id, "Completely different replacement zebra text")
+    yield s
+    s.close()
+
+
+def test_r3_4_fence_keeps_order_of_several_survivors(multi_fence_store):
+    """R3.4 with more than one live survivor: the fenced result is exactly
+    the fence-free ranking with archived and superseded nodes removed."""
+    default_ids = [r["id"] for r in hybrid_search(multi_fence_store, "ordertoken")]
+    unfenced_ids = [r["id"] for r in hybrid_search(multi_fence_store, "ordertoken",
+                                                   include_archived=True)]
+    live = {f"live{n}" for n in range(1, 5)}
+    assert set(default_ids) == live
+    assert {"arch1", "sup1"} <= set(unfenced_ids)
+    assert [i for i in unfenced_ids if i in live] == default_ids, (
+        "fencing must not re-order the surviving candidates (R3.4)")
