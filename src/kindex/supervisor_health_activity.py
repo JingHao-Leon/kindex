@@ -249,8 +249,9 @@ def _jsonl(agent, path, now, projects):
         # A first prompt larger than the head window (a pasted image) hides the
         # first cwd-bearing row; every Claude message row repeats both fields.
         for row in tail:
-            row_sid = row.get("sessionId")
-            if isinstance(row.get("cwd"), str) and row_sid and (sid is None or row_sid == sid):
+            row_sid, row_cwd = row.get("sessionId"), row.get("cwd")
+            if (isinstance(row_cwd, str) and row_sid and (sid is None or row_sid == sid)
+                    and (project is None or row_cwd == project)):
                 project, sid = project or row["cwd"], sid or row_sid
                 break
     if agent == "antigravity":
