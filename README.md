@@ -286,10 +286,15 @@ kindex-remote --access-team-domain <team>.cloudflareaccess.com \
 Only graph tools are served (search, context, add/edit/learn/link, tasks, tags,
 coordination, watches, ask). Tools that run commands, read host paths or ingest
 from the host (reminders, ingest, modes, maintenance, Kinbase, `task_execute`)
-are not, `add` accepts only URL referents, and `show` does not resolve saved
-sources. Connect a client with `claude mcp add --transport http kindex
-https://app.example.com/mcp` (OAuth opens a browser once); a headless client
-sends `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers instead.
+are not, nor is `graph_stats`. `add` accepts only URL referents, task tools
+refuse `project_path`, and `show` does not resolve saved sources. Tool calls run
+one at a time on a worker thread, off the request loop.
+
+The Access application needs Managed OAuth with dynamic client registration
+enabled (and the client's callback URLs allowed) for interactive agents. Connect
+one with `claude mcp add --transport http kindex https://app.example.com/mcp`
+(OAuth opens a browser once); a headless client sends `CF-Access-Client-Id` and
+`CF-Access-Client-Secret` headers instead.
 
 ## Why Kindex
 

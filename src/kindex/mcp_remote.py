@@ -191,11 +191,15 @@ def main() -> None:
         parser.error("--host must be a loopback IP address; publish through the tunnel")
     if args.profile:
         os.environ["KIN_PROFILE"] = args.profile
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     import uvicorn
 
     app = create_app(public_host=args.public_host, port=args.port,
                      verifier=AccessVerifier(args.access_team_domain, args.access_aud))
+    # FastMCP installs its own handler on import; replace it so the log holds
+    # warnings plus one audit line per request, not every library INFO line.
+    logging.basicConfig(level=logging.WARNING, force=True,
+                        format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    log.setLevel(logging.INFO)
     try:
         uvicorn.run(app, host=args.host, port=args.port, proxy_headers=False, log_level="warning")
     finally:

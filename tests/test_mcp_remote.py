@@ -202,3 +202,26 @@ def test_shutdown_closes_the_store_on_the_worker_thread(monkeypatch):
                                      "--access-aud", AUD, "--public-host", HOST])
     mcp_remote.main()
     assert len(closed_on) == 1 and closed_on[0].startswith("kindex-remote")
+
+
+def test_log_keeps_request_audit_lines_and_drops_library_info(monkeypatch):
+    import logging
+
+    import uvicorn
+
+    from kindex import mcp_server
+
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(mcp_server, "_reset_singletons", lambda: None)
+    monkeypatch.setattr("sys.argv", ["kindex-remote", "--access-team-domain", TEAM,
+                                     "--access-aud", AUD, "--public-host", HOST])
+    root = logging.getLogger()
+    saved = (root.level, root.handlers[:], mcp_remote.log.level)
+    try:
+        mcp_remote.main()
+        assert mcp_remote.log.isEnabledFor(logging.INFO)
+        assert not logging.getLogger("mcp.server.streamable_http").isEnabledFor(logging.INFO)
+    finally:
+        root.setLevel(saved[0])
+        root.handlers[:] = saved[1]
+        mcp_remote.log.setLevel(saved[2])
