@@ -26,9 +26,10 @@ from . import mcp_lite, mcp_server
 log = logging.getLogger("kindex.remote")
 
 # Opt-in, like kindex-lite. Reminders (shell actions), ingestion, modes,
-# maintenance, merges, Kinbase (a local executable) and task_execute stay off.
+# maintenance, merges, Kinbase (a local executable) and task_execute stay off,
+# as does graph_stats: whole-graph analytics would hold the one worker for minutes.
 REMOTE_TOOLS = mcp_lite.LOCAL_TOOLS + (
-    "ask", "suggest", "graph_stats", "watch_add", "watch_list", "watch_resolve",
+    "ask", "suggest", "watch_add", "watch_list", "watch_resolve",
 )
 
 
@@ -154,7 +155,7 @@ def create_server(*, public_host: str, port: int):
             "tag_start/tag_resume and tag_update to frame sessions. Tools that run "
             "commands, read host paths or ingest from the host are not available here."
         ),
-        host="127.0.0.1", port=port, stateless_http=True, json_response=True,
+        host="127.0.0.1", port=port, stateless_http=True, json_response=True, log_level="WARNING",
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
             allowed_hosts=[public_host, f"127.0.0.1:{port}", f"localhost:{port}"],
@@ -195,7 +196,11 @@ def main() -> None:
 
     app = create_app(public_host=args.public_host, port=args.port,
                      verifier=AccessVerifier(args.access_team_domain, args.access_aud))
-    uvicorn.run(app, host=args.host, port=args.port, proxy_headers=False, log_level="warning")
+    try:
+        uvicorn.run(app, host=args.host, port=args.port, proxy_headers=False, log_level="warning")
+    finally:
+        # SQLite connections close on the thread that opened them.
+        _WORKER.submit(mcp_server._reset_singletons).result()
 
 
 if __name__ == "__main__":

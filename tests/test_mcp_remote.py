@@ -60,7 +60,7 @@ def _rpc(client, token, method, params=None, *, rpc_id=1):
 
 def test_allowlist_excludes_host_reaching_tools():
     for name in ("remind_create", "remind_exec", "ingest", "task_execute", "graph_merge",
-                 "mode_import", "kinbase_submit", "stale_check", "dream"):
+                 "mode_import", "kinbase_submit", "stale_check", "dream", "graph_stats"):
         assert name not in mcp_remote.REMOTE_TOOLS
 
 
@@ -185,3 +185,20 @@ def test_cli_refuses_a_non_loopback_listener(monkeypatch, host):
     with pytest.raises(SystemExit) as exc:
         mcp_remote.main()
     assert exc.value.code == 2
+
+
+def test_shutdown_closes_the_store_on_the_worker_thread(monkeypatch):
+    import threading
+
+    import uvicorn
+
+    from kindex import mcp_server
+
+    closed_on = []
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(mcp_server, "_reset_singletons",
+                        lambda: closed_on.append(threading.current_thread().name))
+    monkeypatch.setattr("sys.argv", ["kindex-remote", "--access-team-domain", TEAM,
+                                     "--access-aud", AUD, "--public-host", HOST])
+    mcp_remote.main()
+    assert len(closed_on) == 1 and closed_on[0].startswith("kindex-remote")
