@@ -310,6 +310,64 @@ _BASH_SEGMENT_RE = re.compile(r"\|\||&&|\||;|&")
 _LEADING_NOISE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=\S*$")  # FOO=bar env prefix
 _BASH_WRAPPERS = {"sudo", "command", "time", "nohup", "env", "exec", "builtin", "xargs", "nice", "stdbuf"}
 
+# `git` subcommands whose read-only-ness depends on how they were invoked: the
+# name alone does not say whether the command inspects or writes. `git stash`
+# saves the working tree, `git tag v1` creates a tag, `git branch feature`
+# creates a branch, `git config key value` writes a setting, `git remote add`
+# changes the remotes and `git reflog expire` drops reflog entries. The
+# read-only list named the subcommand, so each of those writes counted as pure
+# inspection and every reminder for it was silently dropped. These are
+# read-only only in their inspecting form.
+_GIT_FORM_DEPENDENT = frozenset({
+    "branch", "config", "remote", "reflog", "stash", "tag",
+})
+
+# Flags that make `git branch` / `git tag` list instead of act. `git tag -a`
+# makes an annotated tag (a write) and is deliberately absent from the tag set.
+_GIT_LIST_FLAGS = {
+    "branch": frozenset({"-l", "--list", "-a", "--all", "-v", "--verbose",
+                         "--show-current"}),
+    "tag": frozenset({"-l", "--list", "-n", "--contains", "--no-contains",
+                      "--points-at", "--merged", "--no-merged"}),
+}
+
+# `git config` writes when it is given a value or asked to remove one; reading
+# a single key is inspection.
+_GIT_CONFIG_WRITE_FLAGS = frozenset({
+    "--unset", "--unset-all", "--add", "--remove-section", "--rename-section",
+    "--replace-all",
+})
+
+
+def _git_positional(args: list[str]) -> list[str]:
+    """The non-flag arguments of a git invocation."""
+    return [arg for arg in args if not arg.startswith("-")]
+
+
+def _git_is_readonly_form(sub: str, args: list[str]) -> bool:
+    """Whether this invocation of `git <sub>` only inspects."""
+    positional = _git_positional(args)
+    if sub in ("branch", "tag"):
+        # `git branch feature` and `git tag v1` name what to create; a listing
+        # flag means the arguments are patterns to match, not names to write.
+        if any(arg in _GIT_LIST_FLAGS[sub] for arg in args):
+            return True
+        return not positional
+    if sub == "config":
+        if any(arg in _GIT_CONFIG_WRITE_FLAGS for arg in args):
+            return False
+        return len(positional) <= 1
+    if sub == "remote":
+        # show and get-url read a remote; add/remove/rename/set-url/prune and
+        # update change it.
+        return not positional or positional[0] in ("show", "get-url")
+    if sub == "stash":
+        # A bare `git stash` saves the working tree; only list and show read.
+        return bool(positional) and positional[0] in ("list", "show")
+    if sub == "reflog":
+        return not positional or positional[0] not in ("expire", "delete")
+    return True
+
 
 def _bash_segment_is_readonly(segment: str, config: Config) -> bool:
     """True if a single pipeline segment is pure read-only inspection."""
@@ -322,7 +380,11 @@ def _bash_segment_is_readonly(segment: str, config: Config) -> bool:
     cmd = tokens[0].lstrip("(")
     sub = tokens[1] if len(tokens) > 1 else ""
     if cmd == "git":
-        return sub in config.attention.readonly_git_subcommands
+        if sub not in config.attention.readonly_git_subcommands:
+            return False
+        if sub in _GIT_FORM_DEPENDENT:
+            return _git_is_readonly_form(sub, tokens[2:])
+        return True
     if cmd == "kin":
         subs = config.attention.readonly_kin_subcommands
         # Entries may be two-word ("coord read", "profile list"): a parent

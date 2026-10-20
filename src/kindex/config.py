@@ -523,6 +523,9 @@ class AttentionConfig(BaseModel):
     ])
     # `git` and `kin` are read-only only for these subcommands; any other
     # subcommand (push, commit, index, export, …) is an action and fires.
+    # A listed `git` subcommand is read-only only in its inspecting form:
+    # `git stash` saves the working tree and `git tag v1` creates a tag, so
+    # for those the arguments decide (attention._git_is_readonly_form).
     readonly_git_subcommands: list[str] = Field(default_factory=lambda: [
         "status", "log", "diff", "show", "branch", "rev-parse", "describe",
         "blame", "ls-files", "shortlog", "reflog", "whatchanged", "remote",

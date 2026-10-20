@@ -11,6 +11,15 @@ All notable changes to Kindex are documented here. Format follows [Keep a Change
   header, and serves an allowlist of graph tools; nothing that runs a
   command, reads a host path or ingests from the host is reachable.
 
+### Fixed
+- Attention no longer treats a mutating `git` command as pure read-only
+  inspection. The read-only list named subcommands, so `git stash`, `git tag
+  v1`, `git branch feature`, `git config key value`, `git remote add` and
+  `git reflog expire` counted as inspection and the reminders for them never
+  fired. Those subcommands are read-only only in their inspecting form
+  (`git stash list`, `git tag -l`, `git branch`, `git config key`,
+  `git remote -v`, `git reflog`).
+
 ## [0.49.0] - 2026-10-14
 
 ### Added
