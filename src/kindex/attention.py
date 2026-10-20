@@ -314,7 +314,7 @@ _BASH_WRAPPERS = {"sudo", "command", "time", "nohup", "env", "exec", "builtin", 
 # name alone does not say whether the command inspects or writes. `git stash`
 # saves the working tree, `git tag v1` creates a tag, `git branch feature`
 # creates a branch, `git config key value` writes a setting, `git remote add`
-# changes the remotes and `git reflog expire` drops reflog entries. The
+# changes the remotes, and `git reflog expire` / `drop` / `write` change reflogs. The
 # read-only list named the subcommand, so each of those writes counted as pure
 # inspection and every reminder for it was silently dropped. These are
 # read-only only in their inspecting form.
@@ -355,8 +355,8 @@ _GIT_BRANCH_WRITE_PREFIXES = ("--set-upstream-to=",)
 # `git config` writes when it is given a value or asked to remove one; reading
 # a single key is inspection. `git config edit` (git >= 2.46) and `git config
 # -e` / `--edit` open the file for editing — a write whose argument list looks
-# empty — while `git config get <key>` reads a single value even though it
-# carries two arguments.
+# empty — while `git config get <key>` and the color getters read even when
+# they carry two positional arguments.
 _GIT_CONFIG_WRITE_FLAGS = frozenset({
     "--unset", "--unset-all", "--add", "--remove-section", "--rename-section",
     "--replace-all", "-e", "--edit",
@@ -364,7 +364,8 @@ _GIT_CONFIG_WRITE_FLAGS = frozenset({
 _GIT_CONFIG_WRITE_SUBCOMMANDS = frozenset({"edit"})
 _GIT_CONFIG_READ_SUBCOMMANDS = frozenset({"get"})
 _GIT_CONFIG_READ_FLAGS = frozenset({
-    "--get", "--get-all", "--get-regexp", "--get-urlmatch", "-l", "--list",
+    "--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color",
+    "--get-colorbool", "-l", "--list",
 })
 
 
@@ -411,7 +412,7 @@ def _git_is_readonly_form(sub: str, args: list[str]) -> bool:
         # A bare `git stash` saves the working tree; only list and show read.
         return bool(positional) and positional[0] in ("list", "show")
     if sub == "reflog":
-        return not positional or positional[0] not in ("expire", "delete")
+        return not positional or positional[0] not in ("expire", "delete", "drop", "write")
     return True
 
 

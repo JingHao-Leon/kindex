@@ -675,6 +675,8 @@ def test_is_background_action_fires_on_mutating_git_subcommands():
     assert bg("git stash list") is True
     assert bg("git config user.name") is True
     assert bg("git reflog") is True
+    assert bg("git reflog show HEAD") is True
+    assert bg("git reflog exists HEAD") is True
 
     # The same subcommands, writing: these are actions and must fire.
     assert bg("git stash") is False
@@ -693,6 +695,8 @@ def test_is_background_action_fires_on_mutating_git_subcommands():
     assert bg("git remote remove origin") is False
     assert bg("git remote set-url origin https://example.com/other.git") is False
     assert bg("git reflog expire --all") is False
+    assert bg("git reflog drop --all") is False
+    assert bg("git reflog write HEAD old-oid new-oid message") is False
 
 
 def test_is_background_action_separates_git_listing_from_creation():
@@ -746,6 +750,8 @@ def test_is_background_action_separates_git_listing_from_creation():
     assert bg("git config --get user.name") is True
     assert bg("git config --get-all user.name") is True
     assert bg("git config --get-regexp user") is True
+    assert bg("git config --get-colorbool color.ui true") is True
+    assert bg("git config --get-color color.diff red") is True
     assert bg("git config -l") is True
     assert bg("git config --list") is True
     assert bg("git config edit") is False

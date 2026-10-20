@@ -29,6 +29,9 @@ All notable changes to Kindex are documented here. Format follows [Keep a Change
   without naming a branch, and `git config edit`, `git config -e` and
   `git config --edit` open the file for editing, while `git config get <key>`
   reads a single value.
+- Attention also treats `git reflog drop` and `git reflog write` as actions,
+  while `git config --get-color` and `--get-colorbool` remain read-only even
+  when given an optional second argument.
 
 ## [0.49.0] - 2026-10-14
 
