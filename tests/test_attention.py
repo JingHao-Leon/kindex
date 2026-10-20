@@ -695,6 +695,64 @@ def test_is_background_action_fires_on_mutating_git_subcommands():
     assert bg("git reflog expire --all") is False
 
 
+def test_is_background_action_separates_git_listing_from_creation():
+    """A verbosity flag is not a listing switch, and an option-shaped write writes.
+
+    ``git branch -v feature/x`` creates the branch: ``-v`` only makes a listing
+    louder, so it must not turn a creation into inspection. ``git branch
+    --set-upstream-to=<upstream>``, ``--unset-upstream`` and
+    ``--edit-description`` write the branch configuration without naming a
+    branch, so "no positional argument" does not mean "nothing was written".
+    ``git branch --merged`` / ``--contains`` / ``--points-at`` list filtered
+    branches and their argument is a commit-ish, not a name to create. And
+    ``git config edit`` / ``-e`` open the file for editing while ``git config
+    get <key>`` reads a single value.
+    """
+    cfg = Config()
+
+    def bg(command):
+        payload = {"tool_name": "Bash", "tool_input": {"command": command}}
+        return is_background_action(payload, cfg)
+
+    # Listing switches: the argument is a pattern or a commit-ish.
+    assert bg("git branch") is True
+    assert bg("git branch -v") is True
+    assert bg("git branch --verbose") is True
+    assert bg("git branch --list feature/x") is True
+    assert bg("git branch -l feature/x") is True
+    assert bg("git branch -a") is True
+    assert bg("git branch -r") is True
+    assert bg("git branch --remotes") is True
+    assert bg("git branch --merged base") is True
+    assert bg("git branch --no-merged base") is True
+    assert bg("git branch --contains HEAD") is True
+    assert bg("git branch --no-contains HEAD") is True
+    assert bg("git branch --points-at HEAD") is True
+    assert bg("git branch --show-current") is True
+
+    # A verbosity flag does not make a creation into inspection.
+    assert bg("git branch -v feature/x") is False
+    assert bg("git branch --verbose feature/x") is False
+
+    # Option-shaped writes: the branch name is not a positional argument.
+    assert bg("git branch --set-upstream-to=origin/main") is False
+    assert bg("git branch --set-upstream-to origin/main") is False
+    assert bg("git branch -u origin/main") is False
+    assert bg("git branch --unset-upstream") is False
+    assert bg("git branch --edit-description") is False
+
+    # `git config` reads and writes that do not look like it.
+    assert bg("git config get user.name") is True
+    assert bg("git config --get user.name") is True
+    assert bg("git config --get-all user.name") is True
+    assert bg("git config --get-regexp user") is True
+    assert bg("git config -l") is True
+    assert bg("git config --list") is True
+    assert bg("git config edit") is False
+    assert bg("git config -e") is False
+    assert bg("git config --edit") is False
+
+
 def test_antigravity_tool_call_payload_extracts_text_and_background_status():
     cfg = Config()
     payload = {

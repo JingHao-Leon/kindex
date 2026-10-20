@@ -324,18 +324,47 @@ _GIT_FORM_DEPENDENT = frozenset({
 
 # Flags that make `git branch` / `git tag` list instead of act. `git tag -a`
 # makes an annotated tag (a write) and is deliberately absent from the tag set.
+#
+# `-v` / `--verbose` is deliberately absent from the branch set too: it only
+# makes a listing louder, it does not say that the command lists. `git branch
+# -v feature/x` creates the branch (git 2.50.1: the ref appears, and a
+# following `git branch feature/x` reports "already exists"), so a verbosity
+# flag must not turn a creation into inspection.
+#
+# The listing switches take a pattern or a commit-ish, never the name of a
+# branch to create: `git branch --list feature/x` lists the branches matching
+# "feature/x", and `git branch --merged base` lists the branches merged into
+# `base`.
 _GIT_LIST_FLAGS = {
-    "branch": frozenset({"-l", "--list", "-a", "--all", "-v", "--verbose",
-                         "--show-current"}),
+    "branch": frozenset({"-l", "--list", "-a", "--all", "-r", "--remotes",
+                         "--merged", "--no-merged", "--contains", "--no-contains",
+                         "--points-at", "--show-current"}),
     "tag": frozenset({"-l", "--list", "-n", "--contains", "--no-contains",
                       "--points-at", "--merged", "--no-merged"}),
 }
 
+# `git branch` writes the branch configuration without ever naming a branch:
+# the target is the option's own value (`--set-upstream-to=<upstream>`) or
+# there is no argument at all (`--unset-upstream`, `--edit-description`). So
+# "no positional argument" does not mean "nothing was written" here.
+_GIT_BRANCH_WRITE_FLAGS = frozenset({
+    "-u", "--set-upstream-to", "--unset-upstream", "--edit-description",
+})
+_GIT_BRANCH_WRITE_PREFIXES = ("--set-upstream-to=",)
+
 # `git config` writes when it is given a value or asked to remove one; reading
-# a single key is inspection.
+# a single key is inspection. `git config edit` (git >= 2.46) and `git config
+# -e` / `--edit` open the file for editing — a write whose argument list looks
+# empty — while `git config get <key>` reads a single value even though it
+# carries two arguments.
 _GIT_CONFIG_WRITE_FLAGS = frozenset({
     "--unset", "--unset-all", "--add", "--remove-section", "--rename-section",
-    "--replace-all",
+    "--replace-all", "-e", "--edit",
+})
+_GIT_CONFIG_WRITE_SUBCOMMANDS = frozenset({"edit"})
+_GIT_CONFIG_READ_SUBCOMMANDS = frozenset({"get"})
+_GIT_CONFIG_READ_FLAGS = frozenset({
+    "--get", "--get-all", "--get-regexp", "--get-urlmatch", "-l", "--list",
 })
 
 
@@ -347,15 +376,32 @@ def _git_positional(args: list[str]) -> list[str]:
 def _git_is_readonly_form(sub: str, args: list[str]) -> bool:
     """Whether this invocation of `git <sub>` only inspects."""
     positional = _git_positional(args)
-    if sub in ("branch", "tag"):
-        # `git branch feature` and `git tag v1` name what to create; a listing
-        # flag means the arguments are patterns to match, not names to write.
-        if any(arg in _GIT_LIST_FLAGS[sub] for arg in args):
+    if sub == "branch":
+        # A write switch wins over a listing switch.
+        if (any(arg in _GIT_BRANCH_WRITE_FLAGS for arg in args)
+                or any(arg.startswith(_GIT_BRANCH_WRITE_PREFIXES) for arg in args)):
+            return False
+        # A listing switch means the argument is a pattern or a commit-ish,
+        # not the name of a branch to create.
+        if any(arg in _GIT_LIST_FLAGS["branch"] for arg in args):
+            return True
+        # Otherwise the argument names the branch to create.
+        return not positional
+    if sub == "tag":
+        # `git tag v1` names what to create; a listing flag means the
+        # arguments are patterns to match, not names to write.
+        if any(arg in _GIT_LIST_FLAGS["tag"] for arg in args):
             return True
         return not positional
     if sub == "config":
         if any(arg in _GIT_CONFIG_WRITE_FLAGS for arg in args):
             return False
+        if positional and positional[0] in _GIT_CONFIG_WRITE_SUBCOMMANDS:
+            return False
+        if positional and positional[0] in _GIT_CONFIG_READ_SUBCOMMANDS:
+            return True
+        if any(arg in _GIT_CONFIG_READ_FLAGS for arg in args):
+            return True
         return len(positional) <= 1
     if sub == "remote":
         # show and get-url read a remote; add/remove/rename/set-url/prune and

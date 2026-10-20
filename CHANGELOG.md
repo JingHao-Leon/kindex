@@ -19,6 +19,16 @@ All notable changes to Kindex are documented here. Format follows [Keep a Change
   fired. Those subcommands are read-only only in their inspecting form
   (`git stash list`, `git tag -l`, `git branch`, `git config key`,
   `git remote -v`, `git reflog`).
+- Attention tells a `git branch` listing from a `git branch` creation. A
+  verbosity flag is not a listing switch: `git branch -v feature/x` creates
+  the branch, and `-v` only makes a listing louder. The listing switches
+  (`--list`, `--merged`, `--contains`, `--points-at`, `--remotes`) take a
+  pattern or a commit-ish, so their argument is never a name to create. The
+  option-shaped writes are writes too: `git branch --set-upstream-to=<upstream>`,
+  `--unset-upstream` and `--edit-description` change the branch configuration
+  without naming a branch, and `git config edit`, `git config -e` and
+  `git config --edit` open the file for editing, while `git config get <key>`
+  reads a single value.
 
 ## [0.49.0] - 2026-10-14
 
