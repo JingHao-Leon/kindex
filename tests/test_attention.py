@@ -650,6 +650,51 @@ def test_is_background_action_skips_noise_and_fires_on_actions():
     assert is_background_action({"prompt": "push to github"}, cfg) is False
 
 
+def test_is_background_action_fires_on_mutating_git_subcommands():
+    """A git subcommand's name does not say whether it writes.
+
+    ``git stash`` saves the working tree, ``git tag v1`` creates a tag,
+    ``git branch feature`` creates a branch, ``git config key value`` writes a
+    setting, ``git remote add`` changes the remotes and ``git reflog expire``
+    drops entries. The read-only list named the subcommand, so those writes
+    counted as pure inspection and every reminder for them was dropped.
+    """
+    cfg = Config()
+
+    def bg(command):
+        payload = {"tool_name": "Bash", "tool_input": {"command": command}}
+        return is_background_action(payload, cfg)
+
+    # The inspecting forms stay background noise.
+    assert bg("git status") is True
+    assert bg("git branch") is True
+    assert bg("git tag") is True
+    assert bg("git tag -l") is True
+    assert bg("git remote -v") is True
+    assert bg("git remote show origin") is True
+    assert bg("git stash list") is True
+    assert bg("git config user.name") is True
+    assert bg("git reflog") is True
+
+    # The same subcommands, writing: these are actions and must fire.
+    assert bg("git stash") is False
+    assert bg("git stash push -m wip") is False
+    assert bg("git stash pop") is False
+    assert bg("git tag v1.0.0") is False
+    assert bg("git tag -a v1.0.0 -m msg") is False
+    assert bg("git tag -d v1.0.0") is False
+    assert bg("git branch feature/x") is False
+    assert bg("git branch -d feature/x") is False
+    assert bg("git branch -m old new") is False
+    assert bg("git config user.email a@b.c") is False
+    assert bg("git config --global user.email a@b.c") is False
+    assert bg("git config --unset core.hooksPath") is False
+    assert bg("git remote add origin https://example.com/kindex.git") is False
+    assert bg("git remote remove origin") is False
+    assert bg("git remote set-url origin https://example.com/other.git") is False
+    assert bg("git reflog expire --all") is False
+
+
 def test_antigravity_tool_call_payload_extracts_text_and_background_status():
     cfg = Config()
     payload = {
